@@ -1,0 +1,6 @@
+[package]
+name = "remedios"
+version = "0.1.0"
+authors = ["Jing Peng <pj.hades@gmail.com>"]
+
+[dependencies]
