@@ -14,6 +14,23 @@ pub enum Ast {
     Lparen(u8),
 }
 
+#[macro_export]
+macro_rules! ast {
+    ( [ | $( $t:tt ),+ ] ) => { Ast::Alter(vec![$( ast!($t) ),+]) };
+
+    ( [ & $( $t:tt ),+ ] ) => { Ast::Concat(vec![$( ast!($t) ),+]) };
+
+    ( [ * $t:tt ] ) => { Ast::Star(Box::new(ast!($t))) };
+
+    ( [ + $t:tt ] ) => { Ast::Plus(Box::new(ast!($t))) };
+
+    ( ( $idx:tt $t:tt ) ) => { Ast::Group($idx, Box::new(ast!($t))) };
+
+    ( [ ? $t:tt ] ) => { Ast::Question(Box::new(ast!($t))) };
+
+    ( $c:expr ) => { Ast::Char($c) };
+}
+
 pub struct Parser {
     chars: Vec<char>,
     off: usize,
@@ -199,29 +216,6 @@ impl Parser {
 mod tests {
     use super::*;
 
-    macro_rules! ast {
-        ( [ | $( $t:tt ),+ ] )
-            => { Ast::Alter(vec![$( ast!($t) ),+]) };
-
-        ( [ & $( $t:tt ),+ ] )
-            => { Ast::Concat(vec![$( ast!($t) ),+]) };
-
-        ( [ * $t:tt ] )
-            => { Ast::Star(Box::new(ast!($t))) };
-
-        ( [ + $t:tt ] )
-            => { Ast::Plus(Box::new(ast!($t))) };
-
-        ( ( $idx:tt $t:tt ) )
-            => { Ast::Group($idx, Box::new(ast!($t))) };
-
-        ( [ ? $t:tt ] )
-            => { Ast::Question(Box::new(ast!($t))) };
-
-        ( $c:expr )
-            => { Ast::Char($c) };
-    }
-
     macro_rules! assert_err {
         ( $r:expr, $expected:expr ) => {
             {
@@ -250,6 +244,7 @@ mod tests {
         assert_eq!(Parser::parse("(ab)+").unwrap(), ast!([+ (1 [& 'a', 'b'])]));
         assert_eq!(Parser::parse("(a(bc)?)+").unwrap(), ast!([+ (1 [& 'a', [? (2 [& 'b', 'c'])]])]));
         assert_eq!(Parser::parse("(a+|b*|cd?)").unwrap(), ast!((1 [| [+ 'a'], [* 'b'], [& 'c', [? 'd']]])));
+        assert_eq!(Parser::parse("(a)|(b(c))").unwrap(), ast!([| (1 'a'), (2 [& 'b', (3 'c')])]));
         assert_eq!(Parser::parse("(a)(b)").unwrap(), ast!([& (1 'a'), (2 'b')]));
         assert_eq!(Parser::parse("(a|b)(c|d)").unwrap(), ast!([& (1 [| 'a', 'b']), (2 [| 'c', 'd'])]));
         assert_eq!(Parser::parse("(a)|(b)").unwrap(), ast!([| (1 'a'), (2 'b')]));
@@ -259,6 +254,8 @@ mod tests {
         assert_err!(Parser::parse("+"), SyntaxError::new(0, NothingToRepeat));
         assert_err!(Parser::parse("*"), SyntaxError::new(0, NothingToRepeat));
         assert_err!(Parser::parse("?"), SyntaxError::new(0, NothingToRepeat));
+        assert_err!(Parser::parse("a**"), SyntaxError::new(2, CannotRepeat));
+        assert_err!(Parser::parse("a*?"), SyntaxError::new(2, CannotRepeat));
         assert_err!(Parser::parse("a|+"), SyntaxError::new(2, CannotRepeat));
         assert_err!(Parser::parse("a|b(+"), SyntaxError::new(4, CannotRepeat));
         assert_err!(Parser::parse("|"), SyntaxError::new(0, MissingAlternation));
