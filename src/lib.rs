@@ -1,4 +1,4 @@
-pub mod error;
-#[macro_use]
-pub mod parse;
-pub mod compile;
+mod error;
+mod parse;
+mod compile;
+mod vm;

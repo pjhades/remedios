@@ -7,11 +7,12 @@ use std::fmt;
 // and also 31-bit integer should be large enough
 // to handle the majority of compiled regex instructions,
 // meanwhile maitaining simplicity.
-type Iaddr = i32;
-const HOLE: Iaddr = -1;
+pub type Iaddr = i32;
+pub const HOLE: Iaddr = -1;
+pub const GROUP_MAX: u8 = 9;
 
 #[derive(PartialEq)]
-enum Inst {
+pub enum Inst {
     Match,
     Char(char),
     Split(Iaddr, Iaddr),
@@ -20,8 +21,8 @@ enum Inst {
 }
 
 #[derive(PartialEq)]
-struct Prog {
-    insts: Vec<Inst>,
+pub struct Prog {
+    pub insts: Vec<Inst>,
 }
 
 impl fmt::Debug for Prog {
@@ -46,7 +47,7 @@ impl fmt::Debug for Prog {
     }
 }
 
-struct Compiler {
+pub struct Compiler {
     prog: Prog,
 }
 
@@ -176,6 +177,9 @@ impl Compiler {
     }
 
     fn compile_group(&mut self, groupidx: u8, ast: &Ast) -> Result<Patch, Error> {
+        if groupidx > GROUP_MAX {
+            return self.compile_ast(ast);
+        }
         let save_begin = self.emit(Inst::Save(groupidx * 2));
         let patch = self.compile_ast(ast)?;
         let save_end = self.emit(Inst::Save(groupidx * 2 + 1));
@@ -214,6 +218,7 @@ impl Compiler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use parse::Parser;
 
     macro_rules! i {
         ( match ) => { Inst::Match };
@@ -238,31 +243,31 @@ mod tests {
 
     #[test]
     fn test_compile() {
-        assert_compile!(ast!('a'), p! {
+        assert_compile!(Parser::parse("a").unwrap(), p! {
             i!(char 'a'),
             i!(match)
         });
 
-        assert_compile!(ast!([* 'a']), p! {
+        assert_compile!(Parser::parse("a*").unwrap(), p! {
             i!(split 1, 3),
             i!(char 'a'),
             i!(jump 0),
             i!(match)
         });
 
-        assert_compile!(ast!([+ 'a']), p! {
+        assert_compile!(Parser::parse("a+").unwrap(), p! {
             i!(char 'a'),
             i!(split 0, 2),
             i!(match)
         });
 
-        assert_compile!(ast!([? 'a']), p! {
+        assert_compile!(Parser::parse("a?").unwrap(), p! {
             i!(split 1, 2),
             i!(char 'a'),
             i!(match)
         });
 
-        assert_compile!(ast!([| 'a', 'b', 'c']), p! {
+        assert_compile!(Parser::parse("a|b|c").unwrap(), p! {
             i!(split 1, 3),
             i!(char 'a'),
             i!(jump 7),
@@ -273,14 +278,14 @@ mod tests {
             i!(match)
         });
 
-        assert_compile!(ast!([& 'a', 'b', 'c']), p! {
+        assert_compile!(Parser::parse("abc").unwrap(), p! {
             i!(char 'a'),
             i!(char 'b'),
             i!(char 'c'),
             i!(match)
         });
 
-        assert_compile!(ast!([& (1 'a'), (2 [& 'b', (3 'c')])]), p! {
+        assert_compile!(Parser::parse("(a)(b(c))").unwrap(), p! {
             i!(save 2),
             i!(char 'a'),
             i!(save 3),
@@ -290,6 +295,29 @@ mod tests {
             i!(char 'c'),
             i!(save 7),
             i!(save 5),
+            i!(match)
+        });
+
+        assert_compile!(Parser::parse("((((((((((a))))))))))").unwrap(), p! {
+            i!(save 2),
+            i!(save 4),
+            i!(save 6),
+            i!(save 8),
+            i!(save 10),
+            i!(save 12),
+            i!(save 14),
+            i!(save 16),
+            i!(save 18),
+            i!(char 'a'),
+            i!(save 19),
+            i!(save 17),
+            i!(save 15),
+            i!(save 13),
+            i!(save 11),
+            i!(save 9),
+            i!(save 7),
+            i!(save 5),
+            i!(save 3),
             i!(match)
         });
     }

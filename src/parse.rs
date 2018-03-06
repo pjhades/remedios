@@ -14,23 +14,6 @@ pub enum Ast {
     Lparen(u8),
 }
 
-#[macro_export]
-macro_rules! ast {
-    ( [ | $( $t:tt ),+ ] ) => { Ast::Alter(vec![$( ast!($t) ),+]) };
-
-    ( [ & $( $t:tt ),+ ] ) => { Ast::Concat(vec![$( ast!($t) ),+]) };
-
-    ( [ * $t:tt ] ) => { Ast::Star(Box::new(ast!($t))) };
-
-    ( [ + $t:tt ] ) => { Ast::Plus(Box::new(ast!($t))) };
-
-    ( ( $idx:tt $t:tt ) ) => { Ast::Group($idx, Box::new(ast!($t))) };
-
-    ( [ ? $t:tt ] ) => { Ast::Question(Box::new(ast!($t))) };
-
-    ( $c:expr ) => { Ast::Char($c) };
-}
-
 pub struct Parser {
     chars: Vec<char>,
     off: usize,
@@ -224,6 +207,16 @@ mod tests {
                 assert_eq!(e.kind, $expected.kind);
             }
         };
+    }
+
+    macro_rules! ast {
+        ( [ | $( $t:tt ),+ ] ) => { Ast::Alter(vec![$( ast!($t) ),+]) };
+        ( [ & $( $t:tt ),+ ] ) => { Ast::Concat(vec![$( ast!($t) ),+]) };
+        ( [ * $t:tt ] )        => { Ast::Star(Box::new(ast!($t))) };
+        ( [ + $t:tt ] )        => { Ast::Plus(Box::new(ast!($t))) };
+        ( ( $idx:tt $t:tt ) )  => { Ast::Group($idx, Box::new(ast!($t))) };
+        ( [ ? $t:tt ] )        => { Ast::Question(Box::new(ast!($t))) };
+        ( $c:expr )            => { Ast::Char($c) };
     }
 
     #[test]
