@@ -1,37 +1,12 @@
 use compile::{Prog, Inst, Iaddr, GROUP_MAX};
-use error::Error;
-use std::fmt;
 
 #[derive(Copy, Clone, Default, Debug, PartialEq)]
-struct Group {
-    begin: usize,
-    end: usize,
+pub struct Group {
+    pub begin: usize,
+    pub end: usize,
 }
 
-type Groups = [Option<Group>; (GROUP_MAX as usize + 1) * 2]; 
-
-#[derive(PartialEq)]
-enum MatchResult {
-    NotMatch,
-    Match(Groups),
-}
-
-impl fmt::Debug for MatchResult {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match self {
-            &MatchResult::NotMatch => write!(f, "not match")?,
-            &MatchResult::Match(ref groups) => {
-                writeln!(f, "captures:")?;
-                for (groupidx, group) in groups.iter().enumerate() {
-                    if let &Some(Group { begin, end }) = group {
-                        writeln!(f, "{}: {}, {}", groupidx, begin, end)?;
-                    }
-                }
-            },
-        }
-        Ok(())
-    }
-}
+pub type Groups = [Option<Group>; (GROUP_MAX as usize + 1) * 2];
 
 #[derive(Copy, Clone)]
 struct Thread {
@@ -39,11 +14,12 @@ struct Thread {
     groups: Groups,
 }
 
-struct Vm<'a> {
+#[derive(Debug)]
+pub struct Vm<'a> {
     // The compiled program for the regex.
-    prog: &'a Prog,
+    pub prog: &'a Prog,
     // Groups captured along the execution.
-    groups: Groups,
+    pub groups: Groups,
     // `visited[pc]` is the latest string index seen by thread `pc`.
     // Since the string index only moves forward, we only need to keep
     // one `pc` for a certain string index, because the execution
@@ -97,7 +73,7 @@ impl<'a> Vm<'a> {
         }
     }
 
-    pub fn run(&mut self, s: &Vec<char>) -> Result<MatchResult, Error> {
+    pub fn run(&mut self, s: &Vec<char>) -> bool {
         let mut v1: Vec<Thread> = Vec::with_capacity(self.prog.insts.len());
         let mut v2: Vec<Thread> = Vec::with_capacity(self.prog.insts.len());
         let mut curr: *mut Vec<Thread> = &mut v1;
@@ -112,7 +88,8 @@ impl<'a> Vm<'a> {
                     match &self.prog.insts[th.pc as usize] {
                         &Inst::Match => {
                             th.groups[0] = Some(Group { begin: 0, end: s.len() });
-                            return Ok(MatchResult::Match(th.groups.clone()))
+                            self.groups = th.groups.clone();
+                            return true;
                         },
                         &Inst::Char(c) => {
                             if si < s.len() && s[si] == c {
@@ -131,7 +108,8 @@ impl<'a> Vm<'a> {
                 next = temp;
             }
         }
-        Ok(MatchResult::NotMatch)
+
+        false
     }
 }
 
@@ -141,37 +119,33 @@ mod tests {
     use parse::Parser;
     use compile::Compiler;
 
-    fn m(re: &str, s: &str) -> MatchResult {
+    fn m(re: &str, s: &str) -> bool {
         let prog = Compiler::compile(&Parser::parse(re).unwrap()).unwrap();
-        //println!("{:?}", prog);
         let mut vm = Vm::new(&prog);
-        let res = vm.run(&s.chars().collect()).unwrap();
-        //println!("{:?}", res);
-        res
+        vm.run(&s.chars().collect())
     }
 
     macro_rules! assert_match {
-        ( $re:expr, $s:expr ) => { assert_ne!(m($re, $s), MatchResult::NotMatch); }
+        ( $re:expr, $s:expr ) => { assert!(m($re, $s)); }
+    }
+
+    macro_rules! assert_not_match {
+        ( $re:expr, $s:expr ) => { assert!(!m($re, $s)); }
     }
 
     macro_rules! assert_match_groups {
         ( $re:expr, $s:expr, $( ($groupidx:expr, $begin:expr, $end:expr) ),+ ) => {
-            match m($re, $s) {
-                MatchResult::NotMatch => assert!(false),
-                MatchResult::Match(ref groups) => {
-                    let mut expected = Groups::default();
-                    expected[0] = Some(Group { begin: 0, end: $s.len() });
-                    for (groupidx, begin, end) in vec![$(($groupidx, $begin, $end)),+] {
-                        expected[groupidx] = Some(Group { begin, end });
-                    }
-                    assert_eq!(*groups, expected);
-                },
-            }
-        }
-    }
+            let prog = Compiler::compile(&Parser::parse($re).unwrap()).unwrap();
+            let mut vm = Vm::new(&prog);
+            assert!(vm.run(&$s.chars().collect()));
 
-    macro_rules! assert_not_match {
-        ( $re:expr, $s:expr ) => { assert_eq!(m($re, $s), MatchResult::NotMatch); }
+            let mut expected = Groups::default();
+            expected[0] = Some(Group { begin: 0, end: $s.len() });
+            for (groupidx, begin, end) in vec![$(($groupidx, $begin, $end)),+] {
+                expected[groupidx] = Some(Group { begin, end });
+            }
+            assert_eq!(vm.groups, expected);
+        }
     }
 
     #[test]
