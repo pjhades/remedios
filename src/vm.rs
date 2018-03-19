@@ -1,12 +1,5 @@
-use compile::{Prog, Inst, Iaddr, GROUP_MAX};
-
-#[derive(Copy, Clone, Default, Debug, PartialEq)]
-pub struct Group {
-    pub begin: usize,
-    pub end: usize,
-}
-
-pub type Groups = [Option<Group>; (GROUP_MAX as usize + 1) * 2];
+use ::{Group, Groups};
+use compile::{Prog, Inst, Iaddr};
 
 #[derive(Copy, Clone)]
 struct Thread {

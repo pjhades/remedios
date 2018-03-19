@@ -1,3 +1,4 @@
+use ::GROUP_MAX;
 use error::Error;
 use parse::Ast;
 use std::fmt;
@@ -9,7 +10,6 @@ use std::fmt;
 // meanwhile maitaining simplicity.
 pub type Iaddr = i32;
 pub const HOLE: Iaddr = -1;
-pub const GROUP_MAX: u8 = 9;
 
 #[derive(PartialEq)]
 pub enum Inst {

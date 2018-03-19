@@ -4,10 +4,19 @@ mod compile;
 mod vm;
 
 use error::Error;
-use vm::{Vm, Groups, Group};
+use vm::Vm;
 use compile::Compiler;
 use parse::Parser;
 use std::fmt;
+
+#[derive(Copy, Clone, Default, Debug, PartialEq)]
+pub struct Group {
+    pub begin: usize,
+    pub end: usize,
+}
+pub const GROUP_MAX: u8 = 9;
+
+pub type Groups = [Option<Group>; (GROUP_MAX as usize + 1) * 2];
 
 #[derive(PartialEq)]
 pub enum MatchResult {
