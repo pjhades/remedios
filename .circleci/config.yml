@@ -1,0 +1,23 @@
+version: 2
+jobs:
+  debug_build:
+    docker:
+      - image: rust:latest
+    steps:
+      - checkout
+      - run: cargo build
+      - run: cargo test -- --nocapture
+  release_build:
+    docker:
+      - image: rust:latest
+    steps:
+      - checkout
+      - run: cargo build --release
+      - run: cargo test -- --nocapture
+
+workflows:
+  version: 2
+  build:
+    jobs:
+      - debug_build
+      - release_build
