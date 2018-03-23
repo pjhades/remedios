@@ -1,6 +1,6 @@
 use ::GROUP_MAX;
 use error::Error;
-use parse::Ast;
+use parse::{Ast, Parsed};
 use std::fmt;
 
 // It should be usize to be theoretically correct,
@@ -14,6 +14,9 @@ pub const HOLE: Iaddr = -1;
 #[derive(PartialEq)]
 pub enum Inst {
     Match,
+    // Putting an `Assert(usize)` here will increase the size of `Inst`.
+    AssertHat,
+    AssertDollar,
     Char(char),
     Split(Iaddr, Iaddr),
     Jump(Iaddr),
@@ -41,6 +44,8 @@ impl fmt::Debug for Prog {
                 &Inst::Split(x, y) => writeln!(f, "split {:0w$x} {:0w$x}", x, y, w=width)?,
                 &Inst::Jump(x) => writeln!(f, "jump {:0w$x}", x, w=width)?,
                 &Inst::Save(groupidx) => writeln!(f, "save {}", groupidx)?,
+                &Inst::AssertHat => writeln!(f, "assert hat")?,
+                &Inst::AssertDollar => writeln!(f, "assert dollar")?,
             }
         }
         Ok(())
@@ -202,15 +207,31 @@ impl Compiler {
         }
     }
 
-    pub fn compile(ast: &Ast) -> Result<Prog, Error> {
+    pub fn compile(parsed: &Parsed) -> Result<Prog, Error> {
         let mut c = Compiler {
             prog: Prog { insts: vec![] },
         };
-        let patch = c.compile_ast(ast)?;
-        let match_addr = c.emit(Inst::Match);
-        for hole in patch.holes {
-            c.fill(hole, match_addr);
+
+        if parsed.hat {
+            c.emit(Inst::AssertHat);
         }
+
+        let patch = c.compile_ast(&parsed.ast)?;
+
+        // If present, the dollar assertion should come before `match`.
+        let addr = if parsed.dollar {
+            let x = c.emit(Inst::AssertDollar);
+            c.emit(Inst::Match);
+            x
+        }
+        else {
+            c.emit(Inst::Match)
+        };
+
+        for hole in patch.holes {
+            c.fill(hole, addr);
+        }
+
         Ok(c.prog)
     }
 }
@@ -226,6 +247,8 @@ mod tests {
         ( split $x:expr, $y:expr ) => { Inst::Split($x, $y) };
         ( jump $x:expr ) => { Inst::Jump($x) };
         ( save $x:expr ) => { Inst::Save($x) };
+        ( hat ) => { Inst::AssertHat };
+        ( dollar ) => { Inst::AssertDollar };
     }
 
     macro_rules! p {
@@ -235,39 +258,66 @@ mod tests {
     }
 
     macro_rules! assert_compile {
-        ( $ast:expr, $expected:expr ) => {
-            let prog = Compiler::compile(&$ast).unwrap();
+        ( $parsed:expr, $expected:expr ) => {
+            let prog = Compiler::compile(&$parsed).unwrap();
             assert_eq!(prog, $expected);
         }
     }
 
     #[test]
     fn test_compile() {
-        assert_compile!(Parser::parse("a").unwrap(), p! {
+        assert_compile!(Parser::parse(r"a").unwrap(), p! {
             i!(char 'a'),
             i!(match)
         });
 
-        assert_compile!(Parser::parse("a*").unwrap(), p! {
+        assert_compile!(Parser::parse(r"^a").unwrap(), p! {
+            i!(hat),
+            i!(char 'a'),
+            i!(match)
+        });
+
+        assert_compile!(Parser::parse(r"a$").unwrap(), p! {
+            i!(char 'a'),
+            i!(dollar),
+            i!(match)
+        });
+
+        assert_compile!(Parser::parse(r"a*$").unwrap(), p! {
+            i!(split 1, 3),
+            i!(char 'a'),
+            i!(jump 0),
+            i!(dollar),
+            i!(match)
+        });
+
+        assert_compile!(Parser::parse(r"^a$").unwrap(), p! {
+            i!(hat),
+            i!(char 'a'),
+            i!(dollar),
+            i!(match)
+        });
+
+        assert_compile!(Parser::parse(r"a*").unwrap(), p! {
             i!(split 1, 3),
             i!(char 'a'),
             i!(jump 0),
             i!(match)
         });
 
-        assert_compile!(Parser::parse("a+").unwrap(), p! {
+        assert_compile!(Parser::parse(r"a+").unwrap(), p! {
             i!(char 'a'),
             i!(split 0, 2),
             i!(match)
         });
 
-        assert_compile!(Parser::parse("a?").unwrap(), p! {
+        assert_compile!(Parser::parse(r"a?").unwrap(), p! {
             i!(split 1, 2),
             i!(char 'a'),
             i!(match)
         });
 
-        assert_compile!(Parser::parse("a|b|c").unwrap(), p! {
+        assert_compile!(Parser::parse(r"a|b|c").unwrap(), p! {
             i!(split 1, 3),
             i!(char 'a'),
             i!(jump 7),
@@ -278,14 +328,14 @@ mod tests {
             i!(match)
         });
 
-        assert_compile!(Parser::parse("abc").unwrap(), p! {
+        assert_compile!(Parser::parse(r"abc").unwrap(), p! {
             i!(char 'a'),
             i!(char 'b'),
             i!(char 'c'),
             i!(match)
         });
 
-        assert_compile!(Parser::parse("(a)(b(c))").unwrap(), p! {
+        assert_compile!(Parser::parse(r"(a)(b(c))").unwrap(), p! {
             i!(save 2),
             i!(char 'a'),
             i!(save 3),
@@ -298,7 +348,7 @@ mod tests {
             i!(match)
         });
 
-        assert_compile!(Parser::parse("((((((((((a))))))))))").unwrap(), p! {
+        assert_compile!(Parser::parse(r"((((((((((a))))))))))").unwrap(), p! {
             i!(save 2),
             i!(save 4),
             i!(save 6),
