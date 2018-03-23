@@ -3,6 +3,13 @@ use error::SyntaxErrorKind::*;
 use std::boxed::Box;
 
 #[derive(Debug, PartialEq)]
+pub struct Parsed {
+    pub ast: Ast,
+    pub hat: bool,
+    pub dollar: bool,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Ast {
     Char(char),
     Star(Box<Ast>),
@@ -102,6 +109,8 @@ impl Parser {
         let esc =  match self.chars[self.off] {
             'n' => '\n',
             't' => '\t',
+            '^' => '^',
+            '$' => '$',
             _ => return Err(SyntaxError::new(self.off, UnknownEscape)),
         };
         self.stack.push(Ast::Char(esc));
@@ -163,7 +172,10 @@ impl Parser {
         Ok(())
     }
 
-    fn parse_regex(&mut self) -> Result<Ast, SyntaxError> {
+    fn parse_regex(&mut self) -> Result<Parsed, SyntaxError> {
+        let mut hat = false;
+        let mut dollar = false;
+
         while self.off < self.chars.len() {
             match self.chars[self.off] {
                 '\\' => self.parse_push_esc()?,
@@ -175,6 +187,20 @@ impl Parser {
                     self.off += 1;
                 },
                 ')' => self.parse_group()?,
+                '^' => {
+                    if self.off != 0 {
+                        return Err(SyntaxError::new(self.off, HatAssertPosition));
+                    }
+                    hat = true;
+                    self.off += 1;
+                },
+                '$' => {
+                    if self.off != self.chars.len() - 1 {
+                        return Err(SyntaxError::new(self.off, DollarAssertPosition));
+                    }
+                    dollar = true;
+                    self.off += 1
+                },
                 c @ _ => {
                     self.stack.push(Ast::Char(c));
                     self.off += 1;
@@ -182,10 +208,13 @@ impl Parser {
             }
         }
         self.parse_eof(false)?;
-        Ok(self.stack.pop().unwrap())
+        Ok(Parsed {
+            ast: self.stack.pop().unwrap(),
+            hat, dollar,
+        })
     }
 
-    pub fn parse(pat: &str) -> Result<Ast, SyntaxError> {
+    pub fn parse(pat: &str) -> Result<Parsed, SyntaxError> {
         Parser {
             chars: pat.chars().collect(),
             off: 0,
@@ -200,9 +229,9 @@ mod tests {
     use super::*;
 
     macro_rules! assert_err {
-        ( $r:expr, $expected:expr ) => {
+        ( $re:expr, $expected:expr ) => {
             {
-                let e = $r.unwrap_err();
+                let e = Parser::parse($re).unwrap_err();
                 assert_eq!(e.off, $expected.off);
                 assert_eq!(e.kind, $expected.kind);
             }
@@ -219,45 +248,67 @@ mod tests {
         ( $c:expr )            => { Ast::Char($c) };
     }
 
+    macro_rules! assert_parse {
+        ( $re:expr, $ast:expr, $hat:expr, $dollar:expr ) => {
+            let parsed = Parser::parse($re).unwrap();
+            assert_eq!(parsed.ast, $ast);
+            assert_eq!(parsed.hat, $hat);
+            assert_eq!(parsed.dollar, $dollar);
+        };
+    }
+
     #[test]
     fn test_parse() {
         // The good
-        assert_eq!(Parser::parse("a").unwrap(), ast!('a'));
-        assert_eq!(Parser::parse("\\n").unwrap(), ast!('\n'));
-        assert_eq!(Parser::parse("ab").unwrap(), ast!([& 'a', 'b']));
-        assert_eq!(Parser::parse("a+").unwrap(), ast!([+ 'a']));
-        assert_eq!(Parser::parse("a+b*").unwrap(), ast!([& [+ 'a'], [* 'b']]));
-        assert_eq!(Parser::parse("ab*").unwrap(), ast!([& 'a', [* 'b']]));
-        assert_eq!(Parser::parse("a?b").unwrap(), ast!([& [? 'a'], 'b']));
-        assert_eq!(Parser::parse("a+|b").unwrap(), ast!([| [+ 'a'], 'b']));
-        assert_eq!(Parser::parse("a+|b*").unwrap(), ast!([| [+ 'a'], [* 'b']]));
+        assert_parse!(r"a", ast!('a'), false, false);
+        assert_parse!(r"\n", ast!('\n'), false, false);
+        assert_parse!(r"ab", ast!([& 'a', 'b']), false, false);
+        assert_parse!(r"a+", ast!([+ 'a']), false, false);
+        assert_parse!(r"a+b*", ast!([& [+ 'a'], [* 'b']]), false, false);
+        assert_parse!(r"ab*", ast!([& 'a', [* 'b']]), false, false);
+        assert_parse!(r"a?b", ast!([& [? 'a'], 'b']), false, false);
+        assert_parse!(r"a+|b", ast!([| [+ 'a'], 'b']), false, false);
+        assert_parse!(r"a+|b*", ast!([| [+ 'a'], [* 'b']]), false, false);
 
-        assert_eq!(Parser::parse("(a)").unwrap(), ast!((1 'a')));
-        assert_eq!(Parser::parse("(ab)").unwrap(), ast!((1 [& 'a', 'b'])));
-        assert_eq!(Parser::parse("(ab)+").unwrap(), ast!([+ (1 [& 'a', 'b'])]));
-        assert_eq!(Parser::parse("(a(bc)?)+").unwrap(), ast!([+ (1 [& 'a', [? (2 [& 'b', 'c'])]])]));
-        assert_eq!(Parser::parse("(a+|b*|cd?)").unwrap(), ast!((1 [| [+ 'a'], [* 'b'], [& 'c', [? 'd']]])));
-        assert_eq!(Parser::parse("(a)|(b(c))").unwrap(), ast!([| (1 'a'), (2 [& 'b', (3 'c')])]));
-        assert_eq!(Parser::parse("(a)(b)").unwrap(), ast!([& (1 'a'), (2 'b')]));
-        assert_eq!(Parser::parse("(a|b)(c|d)").unwrap(), ast!([& (1 [| 'a', 'b']), (2 [| 'c', 'd'])]));
-        assert_eq!(Parser::parse("(a)|(b)").unwrap(), ast!([| (1 'a'), (2 'b')]));
-        assert_eq!(Parser::parse("(((quoi?)))").unwrap(), ast!((1 (2 (3 [& 'q', 'u', 'o', [? 'i']])))));
+        assert_parse!(r"(a)", ast!((1 'a')), false, false);
+        assert_parse!(r"(ab)", ast!((1 [& 'a', 'b'])), false, false);
+        assert_parse!(r"(ab)+", ast!([+ (1 [& 'a', 'b'])]), false, false);
+        assert_parse!(r"(a(bc)?)+", ast!([+ (1 [& 'a', [? (2 [& 'b', 'c'])]])]), false, false);
+        assert_parse!(r"(a+|b*|cd?)", ast!((1 [| [+ 'a'], [* 'b'], [& 'c', [? 'd']]])), false, false);
+        assert_parse!(r"(a)|(b(c))", ast!([| (1 'a'), (2 [& 'b', (3 'c')])]), false, false);
+        assert_parse!(r"(a)(b)", ast!([& (1 'a'), (2 'b')]), false, false);
+        assert_parse!(r"(a|b)(c|d)", ast!([& (1 [| 'a', 'b']), (2 [| 'c', 'd'])]), false, false);
+        assert_parse!(r"(a)|(b)", ast!([| (1 'a'), (2 'b')]), false, false);
+        assert_parse!(r"(((quoi?)))", ast!((1 (2 (3 [& 'q', 'u', 'o', [? 'i']])))), false, false);
+
+        assert_parse!(r"^abc", ast!([& 'a', 'b', 'c']), true, false);
+        assert_parse!(r"abc$", ast!([& 'a', 'b', 'c']), false, true);
+        assert_parse!(r"^abc$", ast!([& 'a', 'b', 'c']), true, true);
+        assert_parse!(r"^\^a\^c$", ast!([& '^', 'a', '^', 'c']), true, true);
+        assert_parse!(r"^a\$c\$$", ast!([& 'a', '$', 'c', '$']), true, true);
 
         // The bad
-        assert_err!(Parser::parse("+"), SyntaxError::new(0, NothingToRepeat));
-        assert_err!(Parser::parse("*"), SyntaxError::new(0, NothingToRepeat));
-        assert_err!(Parser::parse("?"), SyntaxError::new(0, NothingToRepeat));
-        assert_err!(Parser::parse("a**"), SyntaxError::new(2, CannotRepeat));
-        assert_err!(Parser::parse("a*?"), SyntaxError::new(2, CannotRepeat));
-        assert_err!(Parser::parse("a|+"), SyntaxError::new(2, CannotRepeat));
-        assert_err!(Parser::parse("a|b(+"), SyntaxError::new(4, CannotRepeat));
-        assert_err!(Parser::parse("|"), SyntaxError::new(0, MissingAlternation));
-        assert_err!(Parser::parse("a|"), SyntaxError::new(2, MissingAlternation));
-        assert_err!(Parser::parse("("), SyntaxError::new(1, UnmatchedParen));
-        assert_err!(Parser::parse(")"), SyntaxError::new(1, UnmatchedParen));
-        assert_err!(Parser::parse("(a"), SyntaxError::new(2, UnmatchedParen));
-        assert_err!(Parser::parse("a)"), SyntaxError::new(2, UnmatchedParen));
-        assert_err!(Parser::parse("()"), SyntaxError::new(2, EmptyRegex));
-        assert_err!(Parser::parse(""), SyntaxError::new(0, EmptyRegex));
+        assert_err!(r"+", SyntaxError::new(0, NothingToRepeat));
+        assert_err!(r"*", SyntaxError::new(0, NothingToRepeat));
+        assert_err!(r"?", SyntaxError::new(0, NothingToRepeat));
+        assert_err!(r"a**", SyntaxError::new(2, CannotRepeat));
+        assert_err!(r"a*?", SyntaxError::new(2, CannotRepeat));
+        assert_err!(r"a|+", SyntaxError::new(2, CannotRepeat));
+        assert_err!(r"a|b(+", SyntaxError::new(4, CannotRepeat));
+        assert_err!(r"|", SyntaxError::new(0, MissingAlternation));
+        assert_err!(r"a|", SyntaxError::new(2, MissingAlternation));
+        assert_err!(r"(", SyntaxError::new(1, UnmatchedParen));
+        assert_err!(r")", SyntaxError::new(1, UnmatchedParen));
+        assert_err!(r"(a", SyntaxError::new(2, UnmatchedParen));
+        assert_err!(r"a)", SyntaxError::new(2, UnmatchedParen));
+        assert_err!(r"()", SyntaxError::new(2, EmptyRegex));
+        assert_err!(r"", SyntaxError::new(0, EmptyRegex));
+
+        assert_err!(r"a^b", SyntaxError::new(1, HatAssertPosition));
+        assert_err!(r"ab^", SyntaxError::new(2, HatAssertPosition));
+        assert_err!(r"$ab", SyntaxError::new(0, DollarAssertPosition));
+        assert_err!(r"a$b", SyntaxError::new(1, DollarAssertPosition));
+
+        assert_err!(r"a\b", SyntaxError::new(2, UnknownEscape));
     }
 }

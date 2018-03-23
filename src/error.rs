@@ -8,6 +8,8 @@ pub enum SyntaxErrorKind {
     UnmatchedParen,
     UnknownEscape,
     EmptyRegex,
+    HatAssertPosition,
+    DollarAssertPosition,
 }
 
 #[derive(Debug)]
@@ -42,6 +44,8 @@ impl From<SyntaxError> for Error {
             SyntaxErrorKind::UnmatchedParen => "unmatched parenthesis",
             SyntaxErrorKind::UnknownEscape => "unknown escape sequence",
             SyntaxErrorKind::EmptyRegex => "empty regex",
+            SyntaxErrorKind::HatAssertPosition => "hat assertion can only occur at the beginning",
+            SyntaxErrorKind::DollarAssertPosition => "dollar assertion can only occur at the end",
         }))
     }
 }
