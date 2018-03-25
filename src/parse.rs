@@ -29,7 +29,24 @@ pub struct Parser {
 }
 
 impl Parser {
-    fn parse_repeat(&mut self, rep: char) -> Result<(), SyntaxError> {
+    fn currchar(&self) -> char {
+        self.chars[self.off]
+    }
+
+    fn nextchar(&self) -> Option<char> {
+        if self.off + 1 >= self.chars.len() {
+            None
+        }
+        else {
+            Some(self.chars[self.off + 1])
+        }
+    }
+
+    fn takechar(&mut self) {
+        self.off += 1
+    }
+
+    fn parse_repeat(&mut self, rep: char, greedy: bool) -> Result<(), SyntaxError> {
         match self.stack.pop() {
             Some(e @ Ast::Char(..)) | Some(e @ Ast::Group(..)) => {
                 let node = match rep {
@@ -42,7 +59,7 @@ impl Parser {
             None => return Err(SyntaxError::new(self.off, NothingToRepeat)),
             _ => return Err(SyntaxError::new(self.off, CannotRepeat)),
         }
-        self.off += 1;
+        self.takechar();
         Ok(())
     }
 
@@ -89,12 +106,12 @@ impl Parser {
                     terms.push(t),
             }
         }
-        self.off += 1;
+        self.takechar();
         Ok(())
     }
 
     fn parse_group(&mut self) -> Result<(), SyntaxError> {
-        self.off += 1;
+        self.takechar();
         self.parse_eof(true)?;
         let group = self.stack.pop().unwrap();
         match self.stack.pop() {
@@ -105,8 +122,8 @@ impl Parser {
     }
 
     fn parse_push_esc(&mut self) -> Result<(), SyntaxError> {
-        self.off += 1;
-        let esc =  match self.chars[self.off] {
+        self.takechar();
+        let esc =  match self.currchar() {
             'n' => '\n',
             't' => '\t',
             '^' => '^',
@@ -114,7 +131,7 @@ impl Parser {
             _ => return Err(SyntaxError::new(self.off, UnknownEscape)),
         };
         self.stack.push(Ast::Char(esc));
-        self.off += 1;
+        self.takechar();
         Ok(())
     }
 
@@ -177,14 +194,22 @@ impl Parser {
         let mut dollar = false;
 
         while self.off < self.chars.len() {
-            match self.chars[self.off] {
+            let curr = self.currchar();
+            match curr {
                 '\\' => self.parse_push_esc()?,
-                c @ '*' | c @ '+' | c @ '?' => self.parse_repeat(c)?,
+                '*' | '+' | '?' => {
+                    let greedy = match self.nextchar() {
+                        Some(c) if c == '?' => true,
+                        Some(_) => false,
+                        None => false,
+                    };
+                    self.parse_repeat(curr, greedy)?;
+                },
                 '|' => self.parse_alter()?,
                 '(' => {
                     self.groupidx += 1;
                     self.stack.push(Ast::Lparen(self.groupidx));
-                    self.off += 1;
+                    self.takechar();
                 },
                 ')' => self.parse_group()?,
                 '^' => {
@@ -192,18 +217,18 @@ impl Parser {
                         return Err(SyntaxError::new(self.off, HatAssertPosition));
                     }
                     hat = true;
-                    self.off += 1;
+                    self.takechar();
                 },
                 '$' => {
                     if self.off != self.chars.len() - 1 {
                         return Err(SyntaxError::new(self.off, DollarAssertPosition));
                     }
                     dollar = true;
-                    self.off += 1
+                    self.takechar();
                 },
-                c @ _ => {
-                    self.stack.push(Ast::Char(c));
-                    self.off += 1;
+                _ => {
+                    self.stack.push(Ast::Char(curr));
+                    self.takechar();
                 }
             }
         }
