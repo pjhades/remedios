@@ -1,6 +1,6 @@
 use ::GROUP_MAX;
 use error::Error;
-use parse::{Ast, Parsed};
+use parse::{Ast, RepKind, Parsed};
 use std::fmt;
 
 // It should be usize to be theoretically correct,
@@ -14,7 +14,7 @@ pub const HOLE: Iaddr = -1;
 #[derive(PartialEq)]
 pub enum Inst {
     Match,
-    // Putting an `Assert(usize)` here will increase the size of `Inst`.
+    // Avoid increasing the size of enum with `Assert(usize)`
     AssertHat,
     AssertDollar,
     Char(char),
@@ -197,9 +197,13 @@ impl Compiler {
     fn compile_ast(&mut self, ast: &Ast) -> Result<Patch, Error> {
         match ast {
             &Ast::Char(c) => self.compile_char(c),
-            &Ast::Star(ref r) => self.compile_star(r),
-            &Ast::Plus(ref r) => self.compile_plus(r),
-            &Ast::Question(ref r) => self.compile_question(r),
+            &Ast::Rep(ref rep) => {
+                match rep.kind {
+                    RepKind::Star => self.compile_star(&rep.ast),
+                    RepKind::Plus => self.compile_plus(&rep.ast),
+                    RepKind::Question => self.compile_question(&rep.ast),
+                }
+            },
             &Ast::Alter(ref r) => self.compile_alter(r),
             &Ast::Concat(ref r) => self.compile_concat(r),
             &Ast::Group(idx, ref r) => self.compile_group(idx, r),
