@@ -49,25 +49,25 @@ impl<'a> Vm<'a> {
                 self.groups = th.groups.clone();
                 self.found_match = true;
                 true
-            },
+            }
             Inst::AssertHat => {
                 if si != 0 {
                     return false;
                 }
                 th.pc += 1;
                 self.epsilon(th, si, slen, list)
-            },
+            }
             Inst::AssertDollar => {
                 if si != slen {
                     return false;
                 }
                 th.pc += 1;
                 self.epsilon(th, si, slen, list)
-            },
+            }
             Inst::Jump(iaddr) => {
                 th.pc = iaddr;
                 self.epsilon(th, si, slen, list)
-            },
+            }
             Inst::Split(iaddr1, iaddr2) => {
                 th.pc = iaddr1;
                 if self.epsilon(th.clone(), si, slen, list) {
@@ -75,7 +75,7 @@ impl<'a> Vm<'a> {
                 }
                 th.pc = iaddr2;
                 self.epsilon(th, si, slen, list)
-            },
+            }
             Inst::Save(groupidx) => {
                 let g = groupidx / 2;
                 if groupidx % 2 == 0 {
@@ -88,11 +88,11 @@ impl<'a> Vm<'a> {
                 }
                 th.pc += 1;
                 self.epsilon(th, si, slen, list)
-            },
+            }
             _ => {
                 list.push(th);
                 false
-            },
+            }
         }
     }
 
@@ -119,12 +119,12 @@ impl<'a> Vm<'a> {
                                     break;
                                 }
                             }
-                        },
+                        }
                         _ => {
                             if self.epsilon(*th, si, slen, &mut *next) {
                                 break;
                             }
-                        },
+                        }
                     }
                 }
                 (*curr).clear();
