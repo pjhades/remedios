@@ -26,6 +26,7 @@ pub struct Rep {
 #[derive(Debug, PartialEq)]
 pub enum Ast {
     Char(char),
+    AnyChar,
     Rep(Rep),
     Alter(Vec<Ast>),
     Concat(Vec<Ast>),
@@ -60,7 +61,9 @@ impl Parser {
 
     fn parse_repeat(&mut self, repchar: char, greedy: bool) -> Result<(), SyntaxError> {
         match self.stack.pop() {
-            Some(e @ Ast::Char(..)) | Some(e @ Ast::Group(..)) => {
+            Some(e @ Ast::Char(..)) |
+            Some(e @ Ast::AnyChar) |
+            Some(e @ Ast::Group(..)) => {
                 let kind = match repchar {
                     '*' => RepKind::Star,
                     '+' => RepKind::Plus,
@@ -242,6 +245,10 @@ impl Parser {
                     dollar = true;
                     self.takechar();
                 }
+                '.' => {
+                    self.stack.push(Ast::AnyChar);
+                    self.takechar();
+                }
                 _ => {
                     self.stack.push(Ast::Char(curr));
                     self.takechar();
@@ -296,7 +303,8 @@ mod tests {
         };
 
         ( ($idx:tt $t:tt) )  => { Ast::Group($idx, Box::new(ast!($t))) };
-        ( $c:expr )            => { Ast::Char($c) };
+        ( $c:expr )          => { Ast::Char($c) };
+        ( . )                => { Ast::AnyChar };
     }
 
     macro_rules! assert_parse {
@@ -323,6 +331,8 @@ mod tests {
         assert_parse!(r"a?b", ast!((& (? 'a'), 'b')), false, false);
         assert_parse!(r"a+|b", ast!((| (+ 'a'), 'b')), false, false);
         assert_parse!(r"a+|b*", ast!((| (+ 'a'), (* 'b'))), false, false);
+        assert_parse!(r".", ast!(.), false, false);
+        assert_parse!(r"a..b", ast!((& 'a', ., ., 'b')), false, false);
 
         assert_parse!(r"(a)", ast!((1 'a')), false, false);
         assert_parse!(r"(ab)", ast!((1 (& 'a', 'b'))), false, false);
