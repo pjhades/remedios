@@ -12,12 +12,27 @@ pub type Iaddr = i32;
 pub const HOLE: Iaddr = -1;
 
 #[derive(PartialEq)]
+pub enum CharKind {
+    Char(char),
+    AnyChar,
+}
+
+impl fmt::Debug for CharKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        match *self {
+            CharKind::Char(c) => write!(f, "char {}", c),
+            CharKind::AnyChar => write!(f, "anychar"),
+        }
+    }
+}
+
+#[derive(PartialEq)]
 pub enum Inst {
     Match,
     // Avoid increasing the size of enum with `Assert(usize)`.
     AssertHat,
     AssertDollar,
-    Char(char),
+    Char(CharKind),
     // The first branch has higher priority.
     Split(Iaddr, Iaddr),
     Jump(Iaddr),
@@ -41,7 +56,7 @@ impl fmt::Debug for Prog {
             write!(f, "{:0w$x} ", i, w=width)?;
             match inst {
                 &Inst::Match => writeln!(f, "match")?,
-                &Inst::Char(c) => writeln!(f, "char {}", c)?,
+                &Inst::Char(ref k) => writeln!(f, "{:?}", k)?,
                 &Inst::Split(x, y) => writeln!(f, "split {:0w$x} {:0w$x}", x, y, w=width)?,
                 &Inst::Jump(x) => writeln!(f, "jump {:0w$x}", x, w=width)?,
                 &Inst::Save(groupidx) => writeln!(f, "save {}", groupidx)?,
@@ -83,8 +98,8 @@ impl Compiler {
         }
     }
 
-    fn compile_char(&mut self, c: char) -> Result<Patch, Error> {
-        let iaddr = self.emit(Inst::Char(c));
+    fn compile_char(&mut self, kind: CharKind) -> Result<Patch, Error> {
+        let iaddr = self.emit(Inst::Char(kind));
         Ok(Patch { entry: iaddr, holes: vec![] })
     }
 
@@ -202,7 +217,8 @@ impl Compiler {
 
     fn compile_ast(&mut self, ast: &Ast) -> Result<Patch, Error> {
         match ast {
-            &Ast::Char(c) => self.compile_char(c),
+            &Ast::Char(c) => self.compile_char(CharKind::Char(c)),
+            &Ast::AnyChar => self.compile_char(CharKind::AnyChar),
             &Ast::Rep(ref rep) => {
                 match rep.kind {
                     RepKind::Star => self.compile_star(&rep.ast, rep.greedy),
@@ -253,7 +269,8 @@ mod tests {
 
     macro_rules! i {
         ( match ) => { Inst::Match };
-        ( char $c:expr ) => { Inst::Char($c) };
+        ( char $c:expr ) => { Inst::Char(CharKind::Char($c)) };
+        ( anychar )      => { Inst::Char(CharKind::AnyChar) };
         ( split $x:expr, $y:expr ) => { Inst::Split($x, $y) };
         ( jump $x:expr ) => { Inst::Jump($x) };
         ( save $x:expr ) => { Inst::Save($x) };
@@ -361,6 +378,21 @@ mod tests {
             i!(char 'a'),
             i!(char 'b'),
             i!(char 'c'),
+            i!(match)
+        });
+
+        assert_compile!(Parser::parse(r"a...c").unwrap(), p! {
+            i!(char 'a'),
+            i!(anychar),
+            i!(anychar),
+            i!(anychar),
+            i!(char 'c'),
+            i!(match)
+        });
+
+        assert_compile!(Parser::parse(r".+").unwrap(), p! {
+            i!(anychar),
+            i!(split 0, 2),
             i!(match)
         });
 

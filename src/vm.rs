@@ -1,5 +1,5 @@
 use ::{Group, Groups};
-use compile::{Prog, Inst, Iaddr};
+use compile::{Prog, Inst, Iaddr, CharKind};
 
 #[derive(Copy, Clone, Debug)]
 struct Thread {
@@ -112,8 +112,16 @@ impl<'a> Vm<'a> {
             while !(*curr).is_empty() {
                 for th in (*curr).iter_mut() {
                     match &self.prog.insts[th.pc as usize] {
-                        &Inst::Char(c) => {
+                        &Inst::Char(CharKind::Char(c)) => {
                             if si < s.len() && s[si] == c {
+                                th.pc += 1;
+                                if self.epsilon(*th, si + 1, slen, &mut *next) {
+                                    break;
+                                }
+                            }
+                        }
+                        &Inst::Char(CharKind::AnyChar) => {
+                            if si < s.len() {
                                 th.pc += 1;
                                 if self.epsilon(*th, si + 1, slen, &mut *next) {
                                     break;
@@ -201,18 +209,21 @@ mod tests {
         assert_match!(r"(a|b)*d+(ef)?", "addef");
         assert_match!(r"(a|b)*d+(ef)?", "bddef");
         assert_match!(r"(a|b)*d+(ef)?", "aabbaddef");
-        // Hat, dollar assersions
+        assert_match!(r".", "a");
+        assert_match!(r".a.", "xay");
+        assert_match!(r"........", "whatever");
         assert_match!(r"^abc", "abcdefg");
         assert_match!(r"a*$", "aaaaaaa");
         assert_match!(r"^a*$", "aaaaaaa");
-        // Greedy, non-greedy
+        assert_match!(r"^...$", "aaa");
         assert_match_groups!(r"a*", "aaa", (0, 0, 3));
         assert_match_groups!(r"a*?", "aaa", (0, 0, 0));
         assert_match_groups!(r"a+", "aaa", (0, 0, 3));
         assert_match_groups!(r"a+?", "aaa", (0, 0, 1));
         assert_match_groups!(r"a?", "aaa", (0, 0, 1));
         assert_match_groups!(r"a??", "aaa", (0, 0, 0));
-        // Capturing groups
+        assert_match_groups!(r"<.+>", "<a>b>c>", (0, 0, 7));
+        assert_match_groups!(r"<.+?>", "<a>b>c>", (0, 0, 3));
         assert_match_groups!(r"(a)", "a", (0, 0, 1), (1, 0, 1));
         assert_match_groups!(r"(a)(b)", "ab", (0, 0, 2), (1, 0, 1), (2, 1, 2));
         assert_match_groups!(r"(a|b)+d", "abaabd", (0, 0, 6), (1, 4, 5));
