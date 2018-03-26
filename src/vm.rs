@@ -18,6 +18,7 @@ pub struct Vm<'a> {
     // one `pc` for a certain string index, because the execution
     // will be the same.
     visited: Vec<usize>,
+    found_match: bool,
 }
 
 impl<'a> Vm<'a> {
@@ -26,40 +27,54 @@ impl<'a> Vm<'a> {
             prog,
             groups: Groups::default(),
             visited: vec![0; prog.insts.len()],
+            found_match: false,
         }
     }
 
-    fn catch_up(&mut self, mut th: Thread, si: usize, slen: usize, list: &mut Vec<Thread>) {
+    fn epsilon(&mut self,
+               mut th: Thread,
+               si: usize,
+               slen: usize,
+               list: &mut Vec<Thread>)
+            -> bool {
         // The recursion here needs more love. Should be done with a stack.
         if si + 1 == self.visited[th.pc as usize] {
-            return;
+            return false;
         }
         self.visited[th.pc as usize] = si + 1;
 
         match self.prog.insts[th.pc as usize] {
+            Inst::Match => {
+                th.groups[0] = Some(Group { begin: 0, end: si });
+                self.groups = th.groups.clone();
+                self.found_match = true;
+                true
+            },
             Inst::AssertHat => {
                 if si != 0 {
-                    return;
+                    return false;
                 }
                 th.pc += 1;
-                self.catch_up(th, si, slen, list);
+                self.epsilon(th, si, slen, list)
             },
             Inst::AssertDollar => {
                 if si != slen {
-                    return;
+                    return false;
                 }
                 th.pc += 1;
-                self.catch_up(th, si, slen, list);
+                self.epsilon(th, si, slen, list)
             },
             Inst::Jump(iaddr) => {
                 th.pc = iaddr;
-                self.catch_up(th, si, slen, list);
+                self.epsilon(th, si, slen, list)
             },
             Inst::Split(iaddr1, iaddr2) => {
                 th.pc = iaddr1;
-                self.catch_up(th.clone(), si, slen, list);
+                if self.epsilon(th.clone(), si, slen, list) {
+                    return true;
+                }
                 th.pc = iaddr2;
-                self.catch_up(th, si, slen, list);
+                self.epsilon(th, si, slen, list)
             },
             Inst::Save(groupidx) => {
                 let g = groupidx / 2;
@@ -72,10 +87,11 @@ impl<'a> Vm<'a> {
                     }
                 }
                 th.pc += 1;
-                self.catch_up(th, si, slen, list);
+                self.epsilon(th, si, slen, list)
             },
             _ => {
                 list.push(th);
+                false
             },
         }
     }
@@ -88,25 +104,27 @@ impl<'a> Vm<'a> {
 
         let slen = s.len();
 
+        // We should get rid of this unsafe.
         unsafe {
             let mut si = 0;
-            self.catch_up(Thread { pc: 0, groups: Groups::default() }, si, slen, &mut *curr);
+            self.epsilon(Thread { pc: 0, groups: Groups::default() }, si, slen, &mut *curr);
 
             while !(*curr).is_empty() {
                 for th in (*curr).iter_mut() {
                     match &self.prog.insts[th.pc as usize] {
-                        &Inst::Match => {
-                            th.groups[0] = Some(Group { begin: 0, end: s.len() });
-                            self.groups = th.groups.clone();
-                            return true;
-                        },
                         &Inst::Char(c) => {
                             if si < s.len() && s[si] == c {
                                 th.pc += 1;
-                                self.catch_up(*th, si + 1, slen, &mut *next);
+                                if self.epsilon(*th, si + 1, slen, &mut *next) {
+                                    break;
+                                }
                             }
                         },
-                        _ => self.catch_up(*th, si, slen, &mut *next),
+                        _ => {
+                            if self.epsilon(*th, si, slen, &mut *next) {
+                                break;
+                            }
+                        },
                     }
                 }
                 (*curr).clear();
@@ -118,7 +136,7 @@ impl<'a> Vm<'a> {
             }
         }
 
-        false
+        self.found_match
     }
 }
 
@@ -149,7 +167,6 @@ mod tests {
             assert!(vm.run(&$s.chars().collect()));
 
             let mut expected = Groups::default();
-            expected[0] = Some(Group { begin: 0, end: $s.len() });
             for (groupidx, begin, end) in vec![$(($groupidx, $begin, $end)),+] {
                 expected[groupidx] = Some(Group { begin, end });
             }
@@ -184,16 +201,23 @@ mod tests {
         assert_match!(r"(a|b)*d+(ef)?", "addef");
         assert_match!(r"(a|b)*d+(ef)?", "bddef");
         assert_match!(r"(a|b)*d+(ef)?", "aabbaddef");
-
+        // Hat, dollar assersions
         assert_match!(r"^abc", "abcdefg");
         assert_match!(r"a*$", "aaaaaaa");
         assert_match!(r"^a*$", "aaaaaaa");
-
-        assert_match_groups!(r"(a)", "a", (1, 0, 1));
-        assert_match_groups!(r"(a)(b)", "ab", (1, 0, 1), (2, 1, 2));
-        assert_match_groups!(r"(a|b)+d", "abaabd", (1, 4, 5));
-        assert_match_groups!(r"(a(b(c)))d", "abcd", (1, 0, 3), (2, 1, 3), (3, 2, 3));
-        assert_match_groups!(r"(a(b)|c(d))e", "cde", (1, 0, 2), (3, 1, 2));
+        // Greedy, non-greedy
+        assert_match_groups!(r"a*", "aaa", (0, 0, 3));
+        assert_match_groups!(r"a*?", "aaa", (0, 0, 0));
+        assert_match_groups!(r"a+", "aaa", (0, 0, 3));
+        assert_match_groups!(r"a+?", "aaa", (0, 0, 1));
+        assert_match_groups!(r"a?", "aaa", (0, 0, 1));
+        assert_match_groups!(r"a??", "aaa", (0, 0, 0));
+        // Capturing groups
+        assert_match_groups!(r"(a)", "a", (0, 0, 1), (1, 0, 1));
+        assert_match_groups!(r"(a)(b)", "ab", (0, 0, 2), (1, 0, 1), (2, 1, 2));
+        assert_match_groups!(r"(a|b)+d", "abaabd", (0, 0, 6), (1, 4, 5));
+        assert_match_groups!(r"(a(b(c)))d", "abcd", (0, 0, 4), (1, 0, 3), (2, 1, 3), (3, 2, 3));
+        assert_match_groups!(r"(a(b)|c(d))e", "cde", (0, 0, 3), (1, 0, 2), (3, 1, 2));
 
         // The bad
         assert_not_match!(r"a", "b");
