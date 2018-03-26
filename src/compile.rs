@@ -209,7 +209,7 @@ impl Compiler {
                     RepKind::Plus => self.compile_plus(&rep.ast, rep.greedy),
                     RepKind::Question => self.compile_question(&rep.ast, rep.greedy),
                 }
-            },
+            }
             &Ast::Alter(ref r) => self.compile_alter(r),
             &Ast::Concat(ref r) => self.compile_concat(r),
             &Ast::Group(idx, ref r) => self.compile_group(idx, r),

@@ -69,7 +69,7 @@ impl Parser {
                 };
                 let rep = Rep { ast: Box::new(e), kind, greedy };
                 self.stack.push(Ast::Rep(rep));
-            },
+            }
             None => return Err(SyntaxError::new(self.off, NothingToRepeat)),
             _ => return Err(SyntaxError::new(self.off, CannotRepeat)),
         }
@@ -96,7 +96,7 @@ impl Parser {
             Some(mut v) => {
                 v.push(concat);
                 self.stack.push(Ast::Alter(v));
-            },
+            }
         }
 
         Ok(())
@@ -109,18 +109,17 @@ impl Parser {
                 None => {
                     self.push_alter(terms, None)?;
                     break;
-                },
+                }
                 Some(Ast::Lparen(g)) => {
                     self.stack.push(Ast::Lparen(g));
                     self.push_alter(terms, None)?;
                     break;
-                },
+                }
                 Some(Ast::Alter(v)) => {
                     self.push_alter(terms, Some(v))?;
                     break;
-                },
-                Some(t) =>
-                    terms.push(t),
+                }
+                Some(t) => terms.push(t),
             }
         }
         self.takechar();
@@ -171,7 +170,7 @@ impl Parser {
             Some(mut v) => {
                 v.push(concat);
                 self.stack.push(Ast::Alter(v));
-            },
+            }
         }
 
         Ok(())
@@ -187,11 +186,11 @@ impl Parser {
                     }
                     self.push_eof(terms, None)?;
                     break;
-                },
+                }
                 Some(Ast::Alter(v)) => {
                     self.push_eof(terms, Some(v))?;
                     break;
-                },
+                }
                 Some(Ast::Lparen(g)) => {
                     if !subregex {
                         return Err(SyntaxError::new(self.off, UnmatchedParen));
@@ -199,7 +198,7 @@ impl Parser {
                     self.stack.push(Ast::Lparen(g));
                     self.push_eof(terms, None)?;
                     break;
-                },
+                }
                 Some(t) => terms.push(t),
             }
         }
@@ -221,13 +220,13 @@ impl Parser {
                         None => true,
                     };
                     self.parse_repeat(curr, greedy)?;
-                },
+                }
                 '|' => self.parse_alter()?,
                 '(' => {
                     self.groupidx += 1;
                     self.stack.push(Ast::Lparen(self.groupidx));
                     self.takechar();
-                },
+                }
                 ')' => self.parse_group()?,
                 '^' => {
                     if self.off != 0 {
@@ -235,14 +234,14 @@ impl Parser {
                     }
                     hat = true;
                     self.takechar();
-                },
+                }
                 '$' => {
                     if self.off != self.chars.len() - 1 {
                         return Err(SyntaxError::new(self.off, DollarAssertPosition));
                     }
                     dollar = true;
                     self.takechar();
-                },
+                }
                 _ => {
                     self.stack.push(Ast::Char(curr));
                     self.takechar();
