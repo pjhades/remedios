@@ -1,6 +1,6 @@
 use ::GROUP_MAX;
 use error::Error;
-use parse::{Ast, Parsed};
+use parse::{Ast, RepKind, Parsed};
 use std::fmt;
 
 // It should be usize to be theoretically correct,
@@ -14,10 +14,11 @@ pub const HOLE: Iaddr = -1;
 #[derive(PartialEq)]
 pub enum Inst {
     Match,
-    // Putting an `Assert(usize)` here will increase the size of `Inst`.
+    // Avoid increasing the size of enum with `Assert(usize)`.
     AssertHat,
     AssertDollar,
     Char(char),
+    // The first branch has higher priority.
     Split(Iaddr, Iaddr),
     Jump(Iaddr),
     Save(u8),
@@ -75,19 +76,9 @@ impl Compiler {
 
     fn fill(&mut self, hole: Iaddr, addr: Iaddr) {
         match self.prog.insts[hole as usize] {
-            Inst::Split(ref mut x, ref mut y) => {
-                if *x == HOLE {
-                    *x = addr;
-                }
-                if *y == HOLE {
-                    *y = addr;
-                }
-            },
-            Inst::Jump(ref mut x) => {
-                if *x == HOLE {
-                    *x = addr;
-                }
-            },
+            Inst::Split(ref mut x, _) if *x == HOLE => *x = addr,
+            Inst::Split(_, ref mut y) if *y == HOLE => *y = addr,
+            Inst::Jump(ref mut x) => *x = addr,
             _ => (),
         }
     }
@@ -97,8 +88,13 @@ impl Compiler {
         Ok(Patch { entry: iaddr, holes: vec![] })
     }
 
-    fn compile_star(&mut self, ast: &Ast) -> Result<Patch, Error> {
-        let inst = Inst::Split(self.next_iaddr() + 1, HOLE);
+    fn compile_star(&mut self, ast: &Ast, greedy: bool) -> Result<Patch, Error> {
+        let inst = if greedy {
+            Inst::Split(self.next_iaddr() + 1, HOLE)
+        }
+        else {
+            Inst::Split(HOLE, self.next_iaddr() + 1)
+        };
         let split = self.emit(inst);
         let patch = self.compile_ast(ast)?;
         let jump = self.emit(Inst::Jump(split));
@@ -108,22 +104,32 @@ impl Compiler {
         Ok(Patch { entry: split, holes: vec![split] })
     }
 
-    fn compile_question(&mut self, ast: &Ast) -> Result<Patch, Error> {
-        let inst = Inst::Split(self.next_iaddr() + 1, HOLE);
+    fn compile_plus(&mut self, ast: &Ast, greedy: bool) -> Result<Patch, Error> {
+        let patch = self.compile_ast(ast)?;
+        let split = if greedy {
+            self.emit(Inst::Split(patch.entry, HOLE))
+        }
+        else {
+            self.emit(Inst::Split(HOLE, patch.entry))
+        };
+        for hole in patch.holes {
+            self.fill(hole, split);
+        }
+        Ok(Patch { entry: patch.entry, holes: vec![split] })
+    }
+
+    fn compile_question(&mut self, ast: &Ast, greedy: bool) -> Result<Patch, Error> {
+        let inst = if greedy {
+            Inst::Split(self.next_iaddr() + 1, HOLE)
+        }
+        else {
+            Inst::Split(HOLE, self.next_iaddr() + 1)
+        };
         let split = self.emit(inst);
         let mut patch = self.compile_ast(ast)?;
         patch.entry = split;
         patch.holes.push(split);
         Ok(patch)
-    }
-
-    fn compile_plus(&mut self, ast: &Ast) -> Result<Patch, Error> {
-        let patch = self.compile_ast(ast)?;
-        let split = self.emit(Inst::Split(patch.entry, HOLE));
-        for hole in patch.holes {
-            self.fill(hole, split);
-        }
-        Ok(Patch { entry: patch.entry, holes: vec![split] })
     }
 
     // ast | ...
@@ -197,9 +203,13 @@ impl Compiler {
     fn compile_ast(&mut self, ast: &Ast) -> Result<Patch, Error> {
         match ast {
             &Ast::Char(c) => self.compile_char(c),
-            &Ast::Star(ref r) => self.compile_star(r),
-            &Ast::Plus(ref r) => self.compile_plus(r),
-            &Ast::Question(ref r) => self.compile_question(r),
+            &Ast::Rep(ref rep) => {
+                match rep.kind {
+                    RepKind::Star => self.compile_star(&rep.ast, rep.greedy),
+                    RepKind::Plus => self.compile_plus(&rep.ast, rep.greedy),
+                    RepKind::Question => self.compile_question(&rep.ast, rep.greedy),
+                }
+            },
             &Ast::Alter(ref r) => self.compile_alter(r),
             &Ast::Concat(ref r) => self.compile_concat(r),
             &Ast::Group(idx, ref r) => self.compile_group(idx, r),
@@ -305,14 +315,33 @@ mod tests {
             i!(match)
         });
 
+        assert_compile!(Parser::parse(r"a*?").unwrap(), p! {
+            i!(split 3, 1),
+            i!(char 'a'),
+            i!(jump 0),
+            i!(match)
+        });
+
         assert_compile!(Parser::parse(r"a+").unwrap(), p! {
             i!(char 'a'),
             i!(split 0, 2),
             i!(match)
         });
 
+        assert_compile!(Parser::parse(r"a+?").unwrap(), p! {
+            i!(char 'a'),
+            i!(split 2, 0),
+            i!(match)
+        });
+
         assert_compile!(Parser::parse(r"a?").unwrap(), p! {
             i!(split 1, 2),
+            i!(char 'a'),
+            i!(match)
+        });
+
+        assert_compile!(Parser::parse(r"a??").unwrap(), p! {
+            i!(split 2, 1),
             i!(char 'a'),
             i!(match)
         });

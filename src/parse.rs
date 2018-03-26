@@ -10,11 +10,23 @@ pub struct Parsed {
 }
 
 #[derive(Debug, PartialEq)]
+pub enum RepKind {
+    Star,
+    Plus,
+    Question,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Rep {
+    pub ast: Box<Ast>,
+    pub kind: RepKind,
+    pub greedy: bool,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Ast {
     Char(char),
-    Star(Box<Ast>),
-    Plus(Box<Ast>),
-    Question(Box<Ast>),
+    Rep(Rep),
     Alter(Vec<Ast>),
     Concat(Vec<Ast>),
     Group(u8, Box<Ast>),
@@ -29,20 +41,42 @@ pub struct Parser {
 }
 
 impl Parser {
-    fn parse_repeat(&mut self, rep: char) -> Result<(), SyntaxError> {
+    fn currchar(&self) -> char {
+        self.chars[self.off]
+    }
+
+    fn nextchar(&self) -> Option<char> {
+        if self.off + 1 >= self.chars.len() {
+            None
+        }
+        else {
+            Some(self.chars[self.off + 1])
+        }
+    }
+
+    fn takechar(&mut self) {
+        self.off += 1
+    }
+
+    fn parse_repeat(&mut self, repchar: char, greedy: bool) -> Result<(), SyntaxError> {
         match self.stack.pop() {
             Some(e @ Ast::Char(..)) | Some(e @ Ast::Group(..)) => {
-                let node = match rep {
-                    '*' => Ast::Star(Box::new(e)),
-                    '+' => Ast::Plus(Box::new(e)),
-                    _ => Ast::Question(Box::new(e)),
+                let kind = match repchar {
+                    '*' => RepKind::Star,
+                    '+' => RepKind::Plus,
+                    '?' => RepKind::Question,
+                    _ => unreachable!("unknown repetition {}", repchar),
                 };
-                self.stack.push(node);
+                let rep = Rep { ast: Box::new(e), kind, greedy };
+                self.stack.push(Ast::Rep(rep));
             },
             None => return Err(SyntaxError::new(self.off, NothingToRepeat)),
             _ => return Err(SyntaxError::new(self.off, CannotRepeat)),
         }
-        self.off += 1;
+        self.takechar();
+        if !greedy {
+            self.takechar();
+        }
         Ok(())
     }
 
@@ -89,12 +123,12 @@ impl Parser {
                     terms.push(t),
             }
         }
-        self.off += 1;
+        self.takechar();
         Ok(())
     }
 
     fn parse_group(&mut self) -> Result<(), SyntaxError> {
-        self.off += 1;
+        self.takechar();
         self.parse_eof(true)?;
         let group = self.stack.pop().unwrap();
         match self.stack.pop() {
@@ -105,8 +139,8 @@ impl Parser {
     }
 
     fn parse_push_esc(&mut self) -> Result<(), SyntaxError> {
-        self.off += 1;
-        let esc =  match self.chars[self.off] {
+        self.takechar();
+        let esc =  match self.currchar() {
             'n' => '\n',
             't' => '\t',
             '^' => '^',
@@ -114,7 +148,7 @@ impl Parser {
             _ => return Err(SyntaxError::new(self.off, UnknownEscape)),
         };
         self.stack.push(Ast::Char(esc));
-        self.off += 1;
+        self.takechar();
         Ok(())
     }
 
@@ -177,14 +211,22 @@ impl Parser {
         let mut dollar = false;
 
         while self.off < self.chars.len() {
-            match self.chars[self.off] {
+            let curr = self.currchar();
+            match curr {
                 '\\' => self.parse_push_esc()?,
-                c @ '*' | c @ '+' | c @ '?' => self.parse_repeat(c)?,
+                '*' | '+' | '?' => {
+                    let greedy = match self.nextchar() {
+                        Some(c) if c == '?' => false,
+                        Some(_) => true,
+                        None => true,
+                    };
+                    self.parse_repeat(curr, greedy)?;
+                },
                 '|' => self.parse_alter()?,
                 '(' => {
                     self.groupidx += 1;
                     self.stack.push(Ast::Lparen(self.groupidx));
-                    self.off += 1;
+                    self.takechar();
                 },
                 ')' => self.parse_group()?,
                 '^' => {
@@ -192,18 +234,18 @@ impl Parser {
                         return Err(SyntaxError::new(self.off, HatAssertPosition));
                     }
                     hat = true;
-                    self.off += 1;
+                    self.takechar();
                 },
                 '$' => {
                     if self.off != self.chars.len() - 1 {
                         return Err(SyntaxError::new(self.off, DollarAssertPosition));
                     }
                     dollar = true;
-                    self.off += 1
+                    self.takechar();
                 },
-                c @ _ => {
-                    self.stack.push(Ast::Char(c));
-                    self.off += 1;
+                _ => {
+                    self.stack.push(Ast::Char(curr));
+                    self.takechar();
                 }
             }
         }
@@ -239,12 +281,22 @@ mod tests {
     }
 
     macro_rules! ast {
-        ( [ | $( $t:tt ),+ ] ) => { Ast::Alter(vec![$( ast!($t) ),+]) };
-        ( [ & $( $t:tt ),+ ] ) => { Ast::Concat(vec![$( ast!($t) ),+]) };
-        ( [ * $t:tt ] )        => { Ast::Star(Box::new(ast!($t))) };
-        ( [ + $t:tt ] )        => { Ast::Plus(Box::new(ast!($t))) };
-        ( ( $idx:tt $t:tt ) )  => { Ast::Group($idx, Box::new(ast!($t))) };
-        ( [ ? $t:tt ] )        => { Ast::Question(Box::new(ast!($t))) };
+        ( (| $( $t:tt ),+) ) => { Ast::Alter(vec![$( ast!($t) ),+]) };
+        ( (& $( $t:tt ),+) ) => { Ast::Concat(vec![$( ast!($t) ),+]) };
+
+        // repetitions, all are delegated to the `rep` macro
+        ( (* $t:tt) )  => { ast!((rep $t, RepKind::Star, true)) };
+        ( (*? $t:tt) ) => { ast!((rep $t, RepKind::Star, false)) };
+        ( (+ $t:tt) )  => { ast!((rep $t, RepKind::Plus, true)) };
+        ( (+? $t:tt) ) => { ast!((rep $t, RepKind::Plus, false)) };
+        ( (? $t:tt) )  => { ast!((rep $t, RepKind::Question, true)) };
+        ( (?? $t:tt) ) => { ast!((rep $t, RepKind::Question, false)) };
+
+        ( (rep $ast:tt, $kind:expr, $greedy:expr) ) => {
+            Ast::Rep(Rep { ast: Box::new(ast!($ast)), kind: $kind, greedy: $greedy, })
+        };
+
+        ( ($idx:tt $t:tt) )  => { Ast::Group($idx, Box::new(ast!($t))) };
         ( $c:expr )            => { Ast::Char($c) };
     }
 
@@ -262,37 +314,39 @@ mod tests {
         // The good
         assert_parse!(r"a", ast!('a'), false, false);
         assert_parse!(r"\n", ast!('\n'), false, false);
-        assert_parse!(r"ab", ast!([& 'a', 'b']), false, false);
-        assert_parse!(r"a+", ast!([+ 'a']), false, false);
-        assert_parse!(r"a+b*", ast!([& [+ 'a'], [* 'b']]), false, false);
-        assert_parse!(r"ab*", ast!([& 'a', [* 'b']]), false, false);
-        assert_parse!(r"a?b", ast!([& [? 'a'], 'b']), false, false);
-        assert_parse!(r"a+|b", ast!([| [+ 'a'], 'b']), false, false);
-        assert_parse!(r"a+|b*", ast!([| [+ 'a'], [* 'b']]), false, false);
+        assert_parse!(r"ab", ast!((& 'a', 'b')), false, false);
+        assert_parse!(r"a+", ast!((+ 'a')), false, false);
+        assert_parse!(r"a*?", ast!((*? 'a')), false, false);
+        assert_parse!(r"a+?", ast!((+? 'a')), false, false);
+        assert_parse!(r"a??", ast!((?? 'a')), false, false);
+        assert_parse!(r"a+b*", ast!((& (+ 'a'), (* 'b'))), false, false);
+        assert_parse!(r"ab*", ast!((& 'a', (* 'b'))), false, false);
+        assert_parse!(r"a?b", ast!((& (? 'a'), 'b')), false, false);
+        assert_parse!(r"a+|b", ast!((| (+ 'a'), 'b')), false, false);
+        assert_parse!(r"a+|b*", ast!((| (+ 'a'), (* 'b'))), false, false);
 
         assert_parse!(r"(a)", ast!((1 'a')), false, false);
-        assert_parse!(r"(ab)", ast!((1 [& 'a', 'b'])), false, false);
-        assert_parse!(r"(ab)+", ast!([+ (1 [& 'a', 'b'])]), false, false);
-        assert_parse!(r"(a(bc)?)+", ast!([+ (1 [& 'a', [? (2 [& 'b', 'c'])]])]), false, false);
-        assert_parse!(r"(a+|b*|cd?)", ast!((1 [| [+ 'a'], [* 'b'], [& 'c', [? 'd']]])), false, false);
-        assert_parse!(r"(a)|(b(c))", ast!([| (1 'a'), (2 [& 'b', (3 'c')])]), false, false);
-        assert_parse!(r"(a)(b)", ast!([& (1 'a'), (2 'b')]), false, false);
-        assert_parse!(r"(a|b)(c|d)", ast!([& (1 [| 'a', 'b']), (2 [| 'c', 'd'])]), false, false);
-        assert_parse!(r"(a)|(b)", ast!([| (1 'a'), (2 'b')]), false, false);
-        assert_parse!(r"(((quoi?)))", ast!((1 (2 (3 [& 'q', 'u', 'o', [? 'i']])))), false, false);
+        assert_parse!(r"(ab)", ast!((1 (& 'a', 'b'))), false, false);
+        assert_parse!(r"(ab)+", ast!((+ (1 (& 'a', 'b')))), false, false);
+        assert_parse!(r"(a(bc)?)+", ast!((+ (1 (& 'a', (? (2 (& 'b', 'c'))))))), false, false);
+        assert_parse!(r"(a+|b*|cd?)", ast!((1 (| (+ 'a'), (* 'b'), (& 'c', (? 'd'))))), false, false);
+        assert_parse!(r"(a)|(b(c))", ast!((| (1 'a'), (2 (& 'b', (3 'c'))))), false, false);
+        assert_parse!(r"(a)(b)", ast!((& (1 'a'), (2 'b'))), false, false);
+        assert_parse!(r"(a|b)(c|d)", ast!((& (1 (| 'a', 'b')), (2 (| 'c', 'd')))), false, false);
+        assert_parse!(r"(a)|(b)", ast!((| (1 'a'), (2 'b'))), false, false);
+        assert_parse!(r"(((quoi?)))", ast!((1 (2 (3 (& 'q', 'u', 'o', (? 'i')))))), false, false);
 
-        assert_parse!(r"^abc", ast!([& 'a', 'b', 'c']), true, false);
-        assert_parse!(r"abc$", ast!([& 'a', 'b', 'c']), false, true);
-        assert_parse!(r"^abc$", ast!([& 'a', 'b', 'c']), true, true);
-        assert_parse!(r"^\^a\^c$", ast!([& '^', 'a', '^', 'c']), true, true);
-        assert_parse!(r"^a\$c\$$", ast!([& 'a', '$', 'c', '$']), true, true);
+        assert_parse!(r"^abc", ast!((& 'a', 'b', 'c')), true, false);
+        assert_parse!(r"abc$", ast!((& 'a', 'b', 'c')), false, true);
+        assert_parse!(r"^abc$", ast!((& 'a', 'b', 'c')), true, true);
+        assert_parse!(r"^\^a\^c$", ast!((& '^', 'a', '^', 'c')), true, true);
+        assert_parse!(r"^a\$c\$$", ast!((& 'a', '$', 'c', '$')), true, true);
 
         // The bad
         assert_err!(r"+", SyntaxError::new(0, NothingToRepeat));
         assert_err!(r"*", SyntaxError::new(0, NothingToRepeat));
         assert_err!(r"?", SyntaxError::new(0, NothingToRepeat));
         assert_err!(r"a**", SyntaxError::new(2, CannotRepeat));
-        assert_err!(r"a*?", SyntaxError::new(2, CannotRepeat));
         assert_err!(r"a|+", SyntaxError::new(2, CannotRepeat));
         assert_err!(r"a|b(+", SyntaxError::new(4, CannotRepeat));
         assert_err!(r"|", SyntaxError::new(0, MissingAlternation));
