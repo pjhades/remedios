@@ -1,0 +1,12 @@
+[package]
+name = "bench"
+version = "0.1.0"
+authors = ["Jing Peng <pj.hades@gmail.com>"]
+
+[profile.release]
+opt-level = 0
+debug = true
+
+[dependencies]
+remedios = { path = "../" }
+rand = "0.4.2"
