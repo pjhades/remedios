@@ -45,7 +45,6 @@ impl<'a> Vm<'a> {
 
         match self.prog.insts[th.pc as usize] {
             Inst::Match => {
-                th.groups[0] = Some(Group { begin: 0, end: si });
                 self.groups = th.groups.clone();
                 self.found_match = true;
                 true
@@ -216,12 +215,16 @@ mod tests {
         assert_match!(r"a*$", "aaaaaaa");
         assert_match!(r"^a*$", "aaaaaaa");
         assert_match!(r"^...$", "aaa");
+        assert_match!(r"aaa", "xxxxxaaaxxxxx");
         assert_match_groups!(r"a*", "aaa", (0, 0, 3));
         assert_match_groups!(r"a*?", "aaa", (0, 0, 0));
         assert_match_groups!(r"a+", "aaa", (0, 0, 3));
         assert_match_groups!(r"a+?", "aaa", (0, 0, 1));
         assert_match_groups!(r"a?", "aaa", (0, 0, 1));
         assert_match_groups!(r"a??", "aaa", (0, 0, 0));
+        assert_match_groups!(r"aaa", "xaaaxaaa", (0, 1, 4));
+        assert_match_groups!(r"^aaa", "aaaxaaa", (0, 0, 3));
+        assert_match_groups!(r"aaa$", "aaaxaaa", (0, 4, 7));
         assert_match_groups!(r"<.+>", "<a>b>c>", (0, 0, 7));
         assert_match_groups!(r"<.+?>", "<a>b>c>", (0, 0, 3));
         assert_match_groups!(r"(a)", "a", (0, 0, 1), (1, 0, 1));
@@ -237,6 +240,8 @@ mod tests {
         assert_not_match!(r"a|b|c", "x");
         assert_not_match!(r"(a|b)+", "x");
         assert_not_match!(r"^a*$", "aaaab");
-        assert_not_match!(r"a*$", "aaaab");
+        assert_not_match!(r"aaa$", "aaaxxxxx");
+        assert_not_match!(r"^aaa", "xxxxxaaa");
+        assert_not_match!(r"aaa", "xxxxxaaxxxx");
     }
 }

@@ -241,23 +241,31 @@ impl Compiler {
         if parsed.hat {
             c.emit(Inst::AssertHat);
         }
+        else {
+            // Add .*? before the compiled code if there's no hat assertion
+            c.emit(Inst::Split(3, 1));
+            c.emit(Inst::Char(CharKind::AnyChar));
+            c.emit(Inst::Jump(0));
+        }
 
+        c.emit(Inst::Save(0));
         let patch = c.compile_ast(&parsed.ast)?;
 
         // If present, the dollar assertion should come before `match`.
         let addr = if parsed.dollar {
             let x = c.emit(Inst::AssertDollar);
-            c.emit(Inst::Match);
+            c.emit(Inst::Save(1));
             x
         }
         else {
-            c.emit(Inst::Match)
+            c.emit(Inst::Save(1))
         };
 
         for hole in patch.holes {
             c.fill(hole, addr);
         }
 
+        c.emit(Inst::Match);
         Ok(c.prog)
     }
 }
@@ -280,6 +288,19 @@ mod tests {
 
     macro_rules! p {
         ( $($i:expr),+ ) => {
+            Prog {
+                insts: vec![
+                    i!(split 3, 1),
+                    i!(anychar),
+                    i!(jump 0),
+                    $($i),+
+                ]
+            }
+        }
+    }
+
+    macro_rules! h {
+        ( $($i:expr),+ ) => {
             Prog { insts: vec![$($i),+], }
         }
     }
@@ -294,109 +315,140 @@ mod tests {
     #[test]
     fn test_compile() {
         assert_compile!(Parser::parse(r"a").unwrap(), p! {
+            i!(save 0),
             i!(char 'a'),
+            i!(save 1),
             i!(match)
         });
 
-        assert_compile!(Parser::parse(r"^a").unwrap(), p! {
+        assert_compile!(Parser::parse(r"^a").unwrap(), h! {
             i!(hat),
+            i!(save 0),
             i!(char 'a'),
+            i!(save 1),
             i!(match)
         });
 
         assert_compile!(Parser::parse(r"a$").unwrap(), p! {
+            i!(save 0),
             i!(char 'a'),
             i!(dollar),
+            i!(save 1),
             i!(match)
         });
 
         assert_compile!(Parser::parse(r"a*$").unwrap(), p! {
-            i!(split 1, 3),
+            i!(save 0),
+            i!(split 5, 7),
             i!(char 'a'),
-            i!(jump 0),
+            i!(jump 4),
             i!(dollar),
+            i!(save 1),
             i!(match)
         });
 
-        assert_compile!(Parser::parse(r"^a$").unwrap(), p! {
+        assert_compile!(Parser::parse(r"^a$").unwrap(), h! {
             i!(hat),
+            i!(save 0),
             i!(char 'a'),
             i!(dollar),
+            i!(save 1),
             i!(match)
         });
 
         assert_compile!(Parser::parse(r"a*").unwrap(), p! {
-            i!(split 1, 3),
+            i!(save 0),
+            i!(split 5, 7),
             i!(char 'a'),
-            i!(jump 0),
+            i!(jump 4),
+            i!(save 1),
             i!(match)
         });
 
         assert_compile!(Parser::parse(r"a*?").unwrap(), p! {
-            i!(split 3, 1),
+            i!(save 0),
+            i!(split 7, 5),
             i!(char 'a'),
-            i!(jump 0),
+            i!(jump 4),
+            i!(save 1),
             i!(match)
         });
 
         assert_compile!(Parser::parse(r"a+").unwrap(), p! {
+            i!(save 0),
             i!(char 'a'),
-            i!(split 0, 2),
+            i!(split 4, 6),
+            i!(save 1),
             i!(match)
         });
 
         assert_compile!(Parser::parse(r"a+?").unwrap(), p! {
+            i!(save 0),
             i!(char 'a'),
-            i!(split 2, 0),
+            i!(split 6, 4),
+            i!(save 1),
             i!(match)
         });
 
         assert_compile!(Parser::parse(r"a?").unwrap(), p! {
-            i!(split 1, 2),
+            i!(save 0),
+            i!(split 5, 6),
             i!(char 'a'),
+            i!(save 1),
             i!(match)
         });
 
         assert_compile!(Parser::parse(r"a??").unwrap(), p! {
-            i!(split 2, 1),
+            i!(save 0),
+            i!(split 6, 5),
             i!(char 'a'),
+            i!(save 1),
             i!(match)
         });
 
         assert_compile!(Parser::parse(r"a|b|c").unwrap(), p! {
-            i!(split 1, 3),
+            i!(save 0),
+            i!(split 5, 7),
             i!(char 'a'),
-            i!(jump 7),
-            i!(split 4, 6),
+            i!(jump 11),
+            i!(split 8, 10),
             i!(char 'b'),
-            i!(jump 7),
+            i!(jump 11),
             i!(char 'c'),
+            i!(save 1),
             i!(match)
         });
 
         assert_compile!(Parser::parse(r"abc").unwrap(), p! {
+            i!(save 0),
             i!(char 'a'),
             i!(char 'b'),
             i!(char 'c'),
+            i!(save 1),
             i!(match)
         });
 
         assert_compile!(Parser::parse(r"a...c").unwrap(), p! {
+            i!(save 0),
             i!(char 'a'),
             i!(anychar),
             i!(anychar),
             i!(anychar),
             i!(char 'c'),
+            i!(save 1),
             i!(match)
         });
 
         assert_compile!(Parser::parse(r".+").unwrap(), p! {
+            i!(save 0),
             i!(anychar),
-            i!(split 0, 2),
+            i!(split 4, 6),
+            i!(save 1),
             i!(match)
         });
 
         assert_compile!(Parser::parse(r"(a)(b(c))").unwrap(), p! {
+            i!(save 0),
             i!(save 2),
             i!(char 'a'),
             i!(save 3),
@@ -406,10 +458,12 @@ mod tests {
             i!(char 'c'),
             i!(save 7),
             i!(save 5),
+            i!(save 1),
             i!(match)
         });
 
         assert_compile!(Parser::parse(r"((((((((((a))))))))))").unwrap(), p! {
+            i!(save 0),
             i!(save 2),
             i!(save 4),
             i!(save 6),
@@ -429,6 +483,7 @@ mod tests {
             i!(save 7),
             i!(save 5),
             i!(save 3),
+            i!(save 1),
             i!(match)
         });
     }
