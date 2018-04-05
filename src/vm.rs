@@ -19,6 +19,7 @@ pub struct Vm<'a> {
     // will be the same.
     visited: Vec<usize>,
     found_match: bool,
+    stack: Vec<Thread>,
 }
 
 impl<'a> Vm<'a> {
@@ -28,71 +29,81 @@ impl<'a> Vm<'a> {
             groups: Groups::default(),
             visited: vec![0; prog.insts.len()],
             found_match: false,
+            stack: vec![],
         }
     }
 
     fn epsilon(&mut self,
-               mut th: Thread,
+               start: Thread,
                si: usize,
                slen: usize,
                list: &mut Vec<Thread>)
             -> bool {
-        // The recursion here needs more love. Should be done with a stack.
-        if si + 1 == self.visited[th.pc as usize] {
-            return false;
-        }
-        self.visited[th.pc as usize] = si + 1;
+        self.stack.clear();
+        self.stack.push(start);
+        // Keep following epsilon transitions until:
+        //   - we find a match, or
+        //   - the stack is empty, which means we have tried all possibilities.
+        loop {
+            let mut th = match self.stack.pop() {
+                None => break,
+                Some(x) => x,
+            };
 
-        match self.prog.insts[th.pc as usize] {
-            Inst::Match => {
-                self.groups = th.groups.clone();
-                self.found_match = true;
-                true
-            }
-            Inst::AssertHat => {
-                if si != 0 {
-                    return false;
+            loop {
+                if si + 1 == self.visited[th.pc as usize] {
+                    break;
                 }
-                th.pc += 1;
-                self.epsilon(th, si, slen, list)
-            }
-            Inst::AssertDollar => {
-                if si != slen {
-                    return false;
-                }
-                th.pc += 1;
-                self.epsilon(th, si, slen, list)
-            }
-            Inst::Jump(iaddr) => {
-                th.pc = iaddr;
-                self.epsilon(th, si, slen, list)
-            }
-            Inst::Split(iaddr1, iaddr2) => {
-                th.pc = iaddr1;
-                if self.epsilon(th.clone(), si, slen, list) {
-                    return true;
-                }
-                th.pc = iaddr2;
-                self.epsilon(th, si, slen, list)
-            }
-            Inst::Save(groupidx) => {
-                let g = groupidx / 2;
-                if groupidx % 2 == 0 {
-                    th.groups[g as usize] = Some(Group { begin: si, end: si });
-                }
-                else {
-                    if let Some(ref mut group) = th.groups[g as usize] {
-                        group.end = si;
+                self.visited[th.pc as usize] = si + 1;
+
+                match self.prog.insts[th.pc as usize] {
+                    Inst::Match => {
+                        self.groups = th.groups.clone();
+                        self.found_match = true;
+                        return true;
+                    }
+                    Inst::AssertHat => {
+                        if si != 0 {
+                            break;
+                        }
+                        th.pc += 1;
+                    }
+                    Inst::AssertDollar => {
+                        if si != slen {
+                            break;
+                        }
+                        th.pc += 1;
+                    }
+                    Inst::Jump(iaddr) => {
+                        th.pc = iaddr;
+                    }
+                    Inst::Split(iaddr1, iaddr2) => {
+                        let mut th2 = th.clone();
+                        th2.pc = iaddr2;
+                        self.stack.push(th2);
+                        th.pc = iaddr1;
+                    }
+                    Inst::Save(groupidx) => {
+                        let g = groupidx / 2;
+                        if groupidx % 2 == 0 {
+                            th.groups[g as usize] = Some(Group { begin: si, end: si });
+                        }
+                        else {
+                            if let Some(ref mut group) = th.groups[g as usize] {
+                                group.end = si;
+                            }
+                        }
+                        th.pc += 1;
+                    }
+                    _ => {
+                        list.push(th);
+                        break;
                     }
                 }
-                th.pc += 1;
-                self.epsilon(th, si, slen, list)
-            }
-            _ => {
-                list.push(th);
-                false
             }
         }
+
+        false
     }
 
     pub fn run(&mut self, s: &Vec<char>) -> bool {
