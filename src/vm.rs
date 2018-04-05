@@ -1,5 +1,6 @@
 use ::{Group, Groups};
 use compile::{Prog, Inst, Iaddr, CharKind};
+use std::mem;
 
 #[derive(Copy, Clone, Debug)]
 struct Thread {
@@ -107,51 +108,42 @@ impl<'a> Vm<'a> {
     }
 
     pub fn run(&mut self, s: &Vec<char>) -> bool {
-        let mut v1: Vec<Thread> = Vec::with_capacity(self.prog.insts.len());
-        let mut v2: Vec<Thread> = Vec::with_capacity(self.prog.insts.len());
-        let mut curr: *mut Vec<Thread> = &mut v1;
-        let mut next: *mut Vec<Thread> = &mut v2;
-
+        let mut curr: Vec<Thread> = Vec::with_capacity(self.prog.insts.len());
+        let mut next: Vec<Thread> = Vec::with_capacity(self.prog.insts.len());
         let slen = s.len();
+        let mut si = 0;
 
-        // We should get rid of this unsafe.
-        unsafe {
-            let mut si = 0;
-            self.epsilon(Thread { pc: 0, groups: Groups::default() }, si, slen, &mut *curr);
+        self.epsilon(Thread { pc: 0, groups: Groups::default() }, si, slen, &mut curr);
 
-            while !(*curr).is_empty() {
-                for th in (*curr).iter_mut() {
-                    match &self.prog.insts[th.pc as usize] {
-                        &Inst::Char(CharKind::Char(c)) => {
-                            if si < s.len() && s[si] == c {
-                                th.pc += 1;
-                                if self.epsilon(*th, si + 1, slen, &mut *next) {
-                                    break;
-                                }
-                            }
-                        }
-                        &Inst::Char(CharKind::AnyChar) => {
-                            if si < s.len() {
-                                th.pc += 1;
-                                if self.epsilon(*th, si + 1, slen, &mut *next) {
-                                    break;
-                                }
-                            }
-                        }
-                        _ => {
-                            if self.epsilon(*th, si, slen, &mut *next) {
+        while !(*curr).is_empty() {
+            for th in (*curr).iter_mut() {
+                match &self.prog.insts[th.pc as usize] {
+                    &Inst::Char(CharKind::Char(c)) => {
+                        if si < s.len() && s[si] == c {
+                            th.pc += 1;
+                            if self.epsilon(*th, si + 1, slen, &mut next) {
                                 break;
                             }
                         }
                     }
+                    &Inst::Char(CharKind::AnyChar) => {
+                        if si < s.len() {
+                            th.pc += 1;
+                            if self.epsilon(*th, si + 1, slen, &mut next) {
+                                break;
+                            }
+                        }
+                    }
+                    _ => {
+                        if self.epsilon(*th, si, slen, &mut next) {
+                            break;
+                        }
+                    }
                 }
-                (*curr).clear();
-                si += 1;
-
-                let temp = curr;
-                curr = next;
-                next = temp;
             }
+            curr.clear();
+            si += 1;
+            mem::swap(&mut curr, &mut next);
         }
 
         self.found_match
