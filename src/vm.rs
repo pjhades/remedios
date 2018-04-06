@@ -115,8 +115,8 @@ impl<'a> Vm<'a> {
 
         self.epsilon(Thread { pc: 0, groups: Groups::default() }, si, slen, &mut curr);
 
-        while !(*curr).is_empty() {
-            for th in (*curr).iter_mut() {
+        while !curr.is_empty() {
+            for th in curr.iter_mut() {
                 match &self.prog.insts[th.pc as usize] {
                     &Inst::Char(CharKind::Char(c)) => {
                         if si < s.len() && s[si] == c {
