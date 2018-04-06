@@ -16,7 +16,7 @@ pub struct Group {
 }
 pub const GROUP_MAX: u8 = 9;
 
-pub type Groups = [Option<Group>; (GROUP_MAX as usize + 1) * 2];
+pub type Groups = [Option<Group>; (GROUP_MAX as usize + 1)];
 
 #[derive(PartialEq)]
 pub enum MatchResult {
