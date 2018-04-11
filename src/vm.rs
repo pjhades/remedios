@@ -1,10 +1,10 @@
 use ::{Group, Groups};
-use compile::{Prog, Inst, Iaddr, CharKind};
+use compile::{Prog, Inst, Ip, CharKind};
 use std::mem;
 
 #[derive(Copy, Clone, Debug)]
 struct Thread {
-    pc: Iaddr,
+    pc: Ip,
     groups: Groups,
 }
 
@@ -75,14 +75,14 @@ impl<'a> Vm<'a> {
                         }
                         th.pc += 1;
                     }
-                    Inst::Jump(iaddr) => {
-                        th.pc = iaddr;
+                    Inst::Jump(ip) => {
+                        th.pc = ip;
                     }
-                    Inst::Split(iaddr1, iaddr2) => {
+                    Inst::Split(ip1, ip2) => {
                         let mut th2 = th.clone();
-                        th2.pc = iaddr2;
+                        th2.pc = ip2;
                         self.stack.push(th2);
-                        th.pc = iaddr1;
+                        th.pc = ip1;
                     }
                     Inst::Save(groupidx) => {
                         let g = groupidx / 2;
