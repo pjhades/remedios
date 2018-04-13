@@ -1,4 +1,4 @@
-use ::{Group, Groups};
+use ::Groups;
 use compile::{Prog, Inst, Ip, CharKind};
 use std::mem;
 
@@ -85,15 +85,7 @@ impl<'a> Vm<'a> {
                         th.pc = ip1;
                     }
                     Inst::Save(groupidx) => {
-                        let g = groupidx / 2;
-                        if groupidx % 2 == 0 {
-                            th.groups[g as usize] = Some(Group { begin: si, end: si });
-                        }
-                        else {
-                            if let Some(ref mut group) = th.groups[g as usize] {
-                                group.end = si;
-                            }
-                        }
+                        th.groups[groupidx as usize] = Some(si);
                         th.pc += 1;
                     }
                     _ => {
@@ -178,7 +170,8 @@ mod tests {
 
             let mut expected = Groups::default();
             for (groupidx, begin, end) in vec![$(($groupidx, $begin, $end)),+] {
-                expected[groupidx] = Some(Group { begin, end });
+                expected[groupidx * 2] = Some(begin);
+                expected[groupidx * 2 + 1] = Some(end);
             }
             assert_eq!(vm.groups, expected);
         }

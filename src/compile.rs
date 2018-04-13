@@ -1,4 +1,4 @@
-use ::GROUP_MAX;
+use ::NGROUPS;
 use error::Error;
 use parse::{Ast, RepKind, Parsed};
 use std::fmt;
@@ -203,7 +203,7 @@ impl Compiler {
     }
 
     fn compile_group(&mut self, groupidx: u8, ast: &Ast) -> Result<Patch, Error> {
-        if groupidx > GROUP_MAX {
+        if groupidx >= NGROUPS {
             return self.compile_ast(ast);
         }
         let save_begin = self.emit(Inst::Save(groupidx * 2));
