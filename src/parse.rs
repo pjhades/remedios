@@ -38,7 +38,7 @@ pub struct Parser {
     chars: Vec<char>,
     off: usize,
     stack: Vec<Ast>,
-    groupidx: u8,
+    pos: u8,
 }
 
 impl Parser {
@@ -226,8 +226,8 @@ impl Parser {
                 }
                 '|' => self.parse_alter()?,
                 '(' => {
-                    self.groupidx += 1;
-                    self.stack.push(Ast::Lparen(self.groupidx));
+                    self.pos += 1;
+                    self.stack.push(Ast::Lparen(self.pos));
                     self.takechar();
                 }
                 ')' => self.parse_group()?,
@@ -267,7 +267,7 @@ impl Parser {
             chars: pat.chars().collect(),
             off: 0,
             stack: vec![],
-            groupidx: 0,
+            pos: 0,
         }.parse_regex()
     }
 }

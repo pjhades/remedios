@@ -2,10 +2,15 @@ use ::Groups;
 use compile::{Prog, Inst, Ip, CharKind};
 use std::mem;
 
-#[derive(Copy, Clone, Debug)]
 struct Thread {
     pc: Ip,
     groups: Groups,
+}
+
+#[derive(Debug)]
+enum Action {
+    Goto(Ip),
+    Restore(u8, Option<usize>),
 }
 
 #[derive(Debug)]
@@ -14,13 +19,13 @@ pub struct Vm<'a> {
     pub prog: &'a Prog,
     // Groups captured along the execution.
     pub groups: Groups,
-    // `visited[pc]` is the latest string index seen by thread `pc`.
-    // Since the string index only moves forward, we only need to keep
-    // one `pc` for a certain string index, because the execution
-    // will be the same.
+    // `visited[ip]` is the latest string index seen by a thread executing
+    // at instruction pointer `ip`. Since the string index only moves forward,
+    // we only need to keep one instruction pointer for a certain string index,
+    // because the execution will be the same.
     visited: Vec<usize>,
     found_match: bool,
-    stack: Vec<Thread>,
+    stack: Vec<Action>,
 }
 
 impl<'a> Vm<'a> {
@@ -34,64 +39,46 @@ impl<'a> Vm<'a> {
         }
     }
 
-    fn epsilon(&mut self,
-               start: Thread,
-               si: usize,
-               slen: usize,
-               list: &mut Vec<Thread>)
-            -> bool {
-        self.stack.clear();
-        self.stack.push(start);
-        // Keep following epsilon transitions until:
-        //   - we find a match, or
-        //   - the stack is empty, which means we have tried all possibilities.
+    fn follow(&mut self, t: &mut Thread, sidx: usize, slen: usize, list: &mut Vec<Thread>) -> bool {
         loop {
-            let mut th = match self.stack.pop() {
-                None => break,
-                Some(x) => x,
-            };
+            if sidx + 1 <= self.visited[t.pc as usize] {
+                break;
+            }
+            self.visited[t.pc as usize] = sidx + 1;
 
-            loop {
-                if si + 1 == self.visited[th.pc as usize] {
-                    break;
+            match self.prog.insts[t.pc as usize] {
+                Inst::Match => {
+                    self.groups = t.groups;
+                    self.found_match = true;
+                    return true;
                 }
-                self.visited[th.pc as usize] = si + 1;
-
-                match self.prog.insts[th.pc as usize] {
-                    Inst::Match => {
-                        self.groups = th.groups.clone();
-                        self.found_match = true;
-                        return true;
-                    }
-                    Inst::AssertHat => {
-                        if si != 0 {
-                            break;
-                        }
-                        th.pc += 1;
-                    }
-                    Inst::AssertDollar => {
-                        if si != slen {
-                            break;
-                        }
-                        th.pc += 1;
-                    }
-                    Inst::Jump(ip) => {
-                        th.pc = ip;
-                    }
-                    Inst::Split(ip1, ip2) => {
-                        let mut th2 = th.clone();
-                        th2.pc = ip2;
-                        self.stack.push(th2);
-                        th.pc = ip1;
-                    }
-                    Inst::Save(groupidx) => {
-                        th.groups[groupidx as usize] = Some(si);
-                        th.pc += 1;
-                    }
-                    _ => {
-                        list.push(th);
+                Inst::AssertHat => {
+                    if sidx != 0 {
                         break;
                     }
+                    t.pc += 1;
+                }
+                Inst::AssertDollar => {
+                    if sidx != slen {
+                        break;
+                    }
+                    t.pc += 1;
+                }
+                Inst::Jump(ip) => {
+                    t.pc = ip;
+                }
+                Inst::Split(ip1, ip2) => {
+                    self.stack.push(Action::Goto(ip2));
+                    t.pc = ip1;
+                }
+                Inst::Save(i) => {
+                    self.stack.push(Action::Restore(i, t.groups[i as usize]));
+                    t.groups[i as usize] = Some(sidx);
+                    t.pc += 1;
+                }
+                _ => {
+                    list.push(Thread { pc: t.pc, groups: t.groups.clone()});
+                    break;
                 }
             }
         }
@@ -99,42 +86,63 @@ impl<'a> Vm<'a> {
         false
     }
 
-    pub fn run(&mut self, s: &Vec<char>) -> bool {
-        let mut curr: Vec<Thread> = Vec::with_capacity(self.prog.insts.len());
-        let mut next: Vec<Thread> = Vec::with_capacity(self.prog.insts.len());
-        let slen = s.len();
-        let mut si = 0;
+    fn epsilon(&mut self, t: &mut Thread, sidx: usize, slen: usize, list: &mut Vec<Thread>) -> bool {
+        self.stack.clear();
+        self.stack.push(Action::Goto(t.pc));
 
-        self.epsilon(Thread { pc: 0, groups: Groups::default() }, si, slen, &mut curr);
+        loop {
+            match self.stack.pop() {
+                None => break,
+                Some(Action::Goto(ip)) => {
+                    t.pc = ip;
+                    if self.follow(t, sidx, slen, list) {
+                        return true;
+                    }
+                }
+                Some(Action::Restore(i, entry)) => t.groups[i as usize] = entry,
+            }
+        }
+
+        false
+    }
+
+    pub fn run(&mut self, s: &Vec<char>) -> bool {
+        let mut curr = Vec::with_capacity(self.prog.insts.len());
+        let mut next = Vec::with_capacity(self.prog.insts.len());
+        let slen = s.len();
+        let mut sidx = 0;
+
+        let mut t = Thread { pc: 0, groups: Groups::default() };
+        self.epsilon(&mut t, sidx, slen, &mut curr);
 
         while !curr.is_empty() {
-            for th in curr.iter_mut() {
-                match &self.prog.insts[th.pc as usize] {
+            for t in curr.iter_mut() {
+                match &self.prog.insts[t.pc as usize] {
                     &Inst::Char(CharKind::Char(c)) => {
-                        if si < s.len() && s[si] == c {
-                            th.pc += 1;
-                            if self.epsilon(*th, si + 1, slen, &mut next) {
+                        if sidx < s.len() && s[sidx] == c {
+                            t.pc += 1;
+                            if self.epsilon(t, sidx + 1, slen, &mut next) {
                                 break;
                             }
                         }
                     }
                     &Inst::Char(CharKind::AnyChar) => {
-                        if si < s.len() {
-                            th.pc += 1;
-                            if self.epsilon(*th, si + 1, slen, &mut next) {
+                        if sidx < s.len() {
+                            t.pc += 1;
+                            if self.epsilon(t, sidx + 1, slen, &mut next) {
                                 break;
                             }
                         }
                     }
                     _ => {
-                        if self.epsilon(*th, si, slen, &mut next) {
+                        if self.epsilon(t, sidx, slen, &mut next) {
                             break;
                         }
                     }
                 }
             }
             curr.clear();
-            si += 1;
+            sidx += 1;
             mem::swap(&mut curr, &mut next);
         }
 
@@ -163,15 +171,15 @@ mod tests {
     }
 
     macro_rules! assert_match_groups {
-        ( $re:expr, $s:expr, $( ($groupidx:expr, $begin:expr, $end:expr) ),+ ) => {
+        ( $re:expr, $s:expr, $( ($i:expr, $begin:expr, $end:expr) ),+ ) => {
             let prog = Compiler::compile(&Parser::parse($re).unwrap()).unwrap();
             let mut vm = Vm::new(&prog);
             assert!(vm.run(&$s.chars().collect()));
 
             let mut expected = Groups::default();
-            for (groupidx, begin, end) in vec![$(($groupidx, $begin, $end)),+] {
-                expected[groupidx * 2] = Some(begin);
-                expected[groupidx * 2 + 1] = Some(end);
+            for (i, begin, end) in vec![$(($i, $begin, $end)),+] {
+                expected[i * 2] = Some(begin);
+                expected[i * 2 + 1] = Some(end);
             }
             assert_eq!(vm.groups, expected);
         }
@@ -193,11 +201,11 @@ mod tests {
         assert_match!(r"a|b|c", "b");
         assert_match!(r"a|b|c", "c");
         assert_match!(r"abcde", "abcde");
-        assert_match!(r"(a*)*", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-        assert_match!(r"((a*)*)*", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-        assert_match!(r"a*a*a*a*", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-        assert_match!(r"(a?)*a*", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-        assert_match!(r"(a*)?a*", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_match!(r"(a*)*", "aaaaaaa");
+        assert_match!(r"((a*)*)*", "aaaaaaa");
+        assert_match!(r"a*a*a*a*", "aaaaaaa");
+        assert_match!(r"(a?)*a*", "aaaaaaa");
+        assert_match!(r"(a*)?a*", "aaaaaaa");
         assert_match!(r"(a|b)*d+(ef)?", "d");
         assert_match!(r"(a|b)*d+(ef)?", "def");
         assert_match!(r"(a|b)*d+(ef)?", "ddef");
@@ -212,6 +220,7 @@ mod tests {
         assert_match!(r"^a*$", "aaaaaaa");
         assert_match!(r"^...$", "aaa");
         assert_match!(r"aaa", "xxxxxaaaxxxxx");
+
         assert_match_groups!(r"a*", "aaa", (0, 0, 3));
         assert_match_groups!(r"a*?", "aaa", (0, 0, 0));
         assert_match_groups!(r"a+", "aaa", (0, 0, 3));
@@ -226,6 +235,8 @@ mod tests {
         assert_match_groups!(r"(a)", "a", (0, 0, 1), (1, 0, 1));
         assert_match_groups!(r"(a)(b)", "ab", (0, 0, 2), (1, 0, 1), (2, 1, 2));
         assert_match_groups!(r"(a|b)+d", "abaabd", (0, 0, 6), (1, 4, 5));
+        assert_match_groups!(r"((a|b)+)d", "abaabd", (0, 0, 6), (1, 0, 5), (2, 4, 5));
+        assert_match_groups!(r"(a(b)|c(d))+x", "abcdx", (0, 0, 5), (1, 2, 4), (2, 1, 2), (3, 3, 4));
         assert_match_groups!(r"(a(b(c)))d", "abcd", (0, 0, 4), (1, 0, 3), (2, 1, 3), (3, 2, 3));
         assert_match_groups!(r"(a(b)|c(d))e", "cde", (0, 0, 3), (1, 0, 2), (3, 1, 2));
         assert_match_groups!(r"(((((((((a)))))))))", "a", (0, 0, 1), (1, 0, 1), (2, 0, 1),

@@ -59,7 +59,7 @@ impl fmt::Debug for Prog {
                 &Inst::Char(ref k) => writeln!(f, "{:?}", k)?,
                 &Inst::Split(x, y) => writeln!(f, "split {:0w$x} {:0w$x}", x, y, w=width)?,
                 &Inst::Jump(x) => writeln!(f, "jump {:0w$x}", x, w=width)?,
-                &Inst::Save(groupidx) => writeln!(f, "save {}", groupidx)?,
+                &Inst::Save(i) => writeln!(f, "save {}", i)?,
                 &Inst::AssertHat => writeln!(f, "assert hat")?,
                 &Inst::AssertDollar => writeln!(f, "assert dollar")?,
             }
@@ -202,13 +202,13 @@ impl Compiler {
         Ok(last_patch)
     }
 
-    fn compile_group(&mut self, groupidx: u8, ast: &Ast) -> Result<Patch, Error> {
-        if groupidx >= NGROUPS {
+    fn compile_group(&mut self, i: u8, ast: &Ast) -> Result<Patch, Error> {
+        if i >= NGROUPS {
             return self.compile_ast(ast);
         }
-        let save_begin = self.emit(Inst::Save(groupidx * 2));
+        let save_begin = self.emit(Inst::Save(i * 2));
         let patch = self.compile_ast(ast)?;
-        let save_end = self.emit(Inst::Save(groupidx * 2 + 1));
+        let save_end = self.emit(Inst::Save(i * 2 + 1));
         for hole in patch.holes {
             self.fill(hole, save_end);
         }
