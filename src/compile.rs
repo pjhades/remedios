@@ -1,4 +1,4 @@
-use ::GROUP_MAX;
+use ::NGROUPS;
 use error::Error;
 use parse::{Ast, RepKind, Parsed};
 use std::fmt;
@@ -8,8 +8,8 @@ use std::fmt;
 // and also 31-bit integer should be large enough
 // to handle the majority of compiled regex instructions,
 // meanwhile maitaining simplicity.
-pub type Iaddr = i32;
-pub const HOLE: Iaddr = -1;
+pub type Ip = i32;
+pub const HOLE: Ip = -1;
 
 #[derive(PartialEq)]
 pub enum CharKind {
@@ -34,8 +34,8 @@ pub enum Inst {
     AssertDollar,
     Char(CharKind),
     // The first branch has higher priority.
-    Split(Iaddr, Iaddr),
-    Jump(Iaddr),
+    Split(Ip, Ip),
+    Jump(Ip),
     Save(u8),
 }
 
@@ -59,7 +59,7 @@ impl fmt::Debug for Prog {
                 &Inst::Char(ref k) => writeln!(f, "{:?}", k)?,
                 &Inst::Split(x, y) => writeln!(f, "split {:0w$x} {:0w$x}", x, y, w=width)?,
                 &Inst::Jump(x) => writeln!(f, "jump {:0w$x}", x, w=width)?,
-                &Inst::Save(groupidx) => writeln!(f, "save {}", groupidx)?,
+                &Inst::Save(i) => writeln!(f, "save {}", i)?,
                 &Inst::AssertHat => writeln!(f, "assert hat")?,
                 &Inst::AssertDollar => writeln!(f, "assert dollar")?,
             }
@@ -74,41 +74,41 @@ pub struct Compiler {
 
 #[derive(Debug)]
 struct Patch {
-    entry: Iaddr,
-    holes: Vec<Iaddr>,
+    entry: Ip,
+    holes: Vec<Ip>,
 }
 
 impl Compiler {
-    fn next_iaddr(&self) -> Iaddr {
-        self.prog.insts.len() as Iaddr
+    fn next_ip(&self) -> Ip {
+        self.prog.insts.len() as Ip
     }
 
-    fn emit(&mut self, inst: Inst) -> Iaddr {
-        let iaddr = self.next_iaddr();
+    fn emit(&mut self, inst: Inst) -> Ip {
+        let ip = self.next_ip();
         self.prog.insts.push(inst);
-        iaddr
+        ip
     }
 
-    fn fill(&mut self, hole: Iaddr, addr: Iaddr) {
+    fn fill(&mut self, hole: Ip, ip: Ip) {
         match self.prog.insts[hole as usize] {
-            Inst::Split(ref mut x, _) if *x == HOLE => *x = addr,
-            Inst::Split(_, ref mut y) if *y == HOLE => *y = addr,
-            Inst::Jump(ref mut x) => *x = addr,
+            Inst::Split(ref mut x, _) if *x == HOLE => *x = ip,
+            Inst::Split(_, ref mut y) if *y == HOLE => *y = ip,
+            Inst::Jump(ref mut x) => *x = ip,
             _ => (),
         }
     }
 
     fn compile_char(&mut self, kind: CharKind) -> Result<Patch, Error> {
-        let iaddr = self.emit(Inst::Char(kind));
-        Ok(Patch { entry: iaddr, holes: vec![] })
+        let ip = self.emit(Inst::Char(kind));
+        Ok(Patch { entry: ip, holes: vec![] })
     }
 
     fn compile_star(&mut self, ast: &Ast, greedy: bool) -> Result<Patch, Error> {
         let inst = if greedy {
-            Inst::Split(self.next_iaddr() + 1, HOLE)
+            Inst::Split(self.next_ip() + 1, HOLE)
         }
         else {
-            Inst::Split(HOLE, self.next_iaddr() + 1)
+            Inst::Split(HOLE, self.next_ip() + 1)
         };
         let split = self.emit(inst);
         let patch = self.compile_ast(ast)?;
@@ -135,10 +135,10 @@ impl Compiler {
 
     fn compile_question(&mut self, ast: &Ast, greedy: bool) -> Result<Patch, Error> {
         let inst = if greedy {
-            Inst::Split(self.next_iaddr() + 1, HOLE)
+            Inst::Split(self.next_ip() + 1, HOLE)
         }
         else {
-            Inst::Split(HOLE, self.next_iaddr() + 1)
+            Inst::Split(HOLE, self.next_ip() + 1)
         };
         let split = self.emit(inst);
         let mut patch = self.compile_ast(ast)?;
@@ -161,7 +161,7 @@ impl Compiler {
         let (except_last, last) = asts.split_at(asts.len() - 1);
 
         for ast in except_last {
-            let inst = Inst::Split(self.next_iaddr() + 1, HOLE);
+            let inst = Inst::Split(self.next_ip() + 1, HOLE);
             let split = self.emit(inst);
             if entry == HOLE {
                 entry = split;
@@ -202,13 +202,13 @@ impl Compiler {
         Ok(last_patch)
     }
 
-    fn compile_group(&mut self, groupidx: u8, ast: &Ast) -> Result<Patch, Error> {
-        if groupidx > GROUP_MAX {
+    fn compile_group(&mut self, i: u8, ast: &Ast) -> Result<Patch, Error> {
+        if i >= NGROUPS {
             return self.compile_ast(ast);
         }
-        let save_begin = self.emit(Inst::Save(groupidx * 2));
+        let save_begin = self.emit(Inst::Save(i * 2));
         let patch = self.compile_ast(ast)?;
-        let save_end = self.emit(Inst::Save(groupidx * 2 + 1));
+        let save_end = self.emit(Inst::Save(i * 2 + 1));
         for hole in patch.holes {
             self.fill(hole, save_end);
         }
@@ -252,7 +252,7 @@ impl Compiler {
         let patch = c.compile_ast(&parsed.ast)?;
 
         // If present, the dollar assertion should come before `match`.
-        let addr = if parsed.dollar {
+        let ip = if parsed.dollar {
             let x = c.emit(Inst::AssertDollar);
             c.emit(Inst::Save(1));
             x
@@ -262,7 +262,7 @@ impl Compiler {
         };
 
         for hole in patch.holes {
-            c.fill(hole, addr);
+            c.fill(hole, ip);
         }
 
         c.emit(Inst::Match);
