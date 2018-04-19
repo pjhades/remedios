@@ -31,14 +31,16 @@ pub enum Ast {
     Alter(Vec<Ast>),
     Concat(Vec<Ast>),
     Group(u8, Box<Ast>),
+    NonCapGroup(Box<Ast>),
     Lparen(u8),
+    NonCapLparen,
 }
 
 pub struct Parser {
     chars: Vec<char>,
     off: usize,
     stack: Vec<Ast>,
-    pos: u8,
+    paren: u8,
 }
 
 impl Parser {
@@ -46,17 +48,17 @@ impl Parser {
         self.chars[self.off]
     }
 
-    fn nextchar(&self) -> Option<char> {
-        if self.off + 1 >= self.chars.len() {
+    fn nextchar(&self, off: usize) -> Option<char> {
+        if self.off + off >= self.chars.len() {
             None
         }
         else {
-            Some(self.chars[self.off + 1])
+            Some(self.chars[self.off + off])
         }
     }
 
-    fn takechar(&mut self) {
-        self.off += 1
+    fn takechar(&mut self, off: usize) {
+        self.off += off
     }
 
     fn parse_repeat(&mut self, repchar: char, greedy: bool) -> Result<(), SyntaxError> {
@@ -76,9 +78,9 @@ impl Parser {
             None => return Err(SyntaxError::new(self.off, NothingToRepeat)),
             _ => return Err(SyntaxError::new(self.off, CannotRepeat)),
         }
-        self.takechar();
+        self.takechar(1);
         if !greedy {
-            self.takechar();
+            self.takechar(1);
         }
         Ok(())
     }
@@ -113,8 +115,9 @@ impl Parser {
                     self.push_alter(terms, None)?;
                     break;
                 }
-                Some(Ast::Lparen(g)) => {
-                    self.stack.push(Ast::Lparen(g));
+                Some(paren @ Ast::Lparen(_)) |
+                Some(paren @ Ast::NonCapLparen)=> {
+                    self.stack.push(paren);
                     self.push_alter(terms, None)?;
                     break;
                 }
@@ -125,23 +128,24 @@ impl Parser {
                 Some(t) => terms.push(t),
             }
         }
-        self.takechar();
+        self.takechar(1);
         Ok(())
     }
 
     fn parse_group(&mut self) -> Result<(), SyntaxError> {
-        self.takechar();
+        self.takechar(1);
         self.parse_eof(true)?;
         let group = self.stack.pop().unwrap();
         match self.stack.pop() {
             Some(Ast::Lparen(g)) => self.stack.push(Ast::Group(g, Box::new(group))),
+            Some(Ast::NonCapLparen) => self.stack.push(Ast::NonCapGroup(Box::new(group))),
             _ => return Err(SyntaxError::new(self.off, UnmatchedParen)),
         }
         Ok(())
     }
 
     fn parse_push_esc(&mut self) -> Result<(), SyntaxError> {
-        self.takechar();
+        self.takechar(1);
         let esc =  match self.currchar() {
             'n' => '\n',
             't' => '\t',
@@ -150,7 +154,7 @@ impl Parser {
             _ => return Err(SyntaxError::new(self.off, UnknownEscape)),
         };
         self.stack.push(Ast::Char(esc));
-        self.takechar();
+        self.takechar(1);
         Ok(())
     }
 
@@ -194,16 +198,35 @@ impl Parser {
                     self.push_eof(terms, Some(v))?;
                     break;
                 }
-                Some(Ast::Lparen(g)) => {
+                Some(paren @ Ast::Lparen(_)) |
+                Some(paren @ Ast::NonCapLparen) => {
                     if !subregex {
                         return Err(SyntaxError::new(self.off, UnmatchedParen));
                     }
-                    self.stack.push(Ast::Lparen(g));
+                    self.stack.push(paren);
                     self.push_eof(terms, None)?;
                     break;
                 }
                 Some(t) => terms.push(t),
             }
+        }
+        Ok(())
+    }
+
+    fn parse_paren(&mut self) -> Result<(), SyntaxError> {
+        if let Some('?') = self.nextchar(1) {
+            match self.nextchar(2) {
+                Some(':') => {
+                    self.stack.push(Ast::NonCapLparen);
+                    self.takechar(3); // take (?:
+                }
+                _ => return Err(SyntaxError::new(self.off + 2, UnknownGroupExt)),
+            }
+        }
+        else {
+            self.paren += 1;
+            self.stack.push(Ast::Lparen(self.paren));
+            self.takechar(1); // take (
         }
         Ok(())
     }
@@ -217,7 +240,7 @@ impl Parser {
             match curr {
                 '\\' => self.parse_push_esc()?,
                 '*' | '+' | '?' => {
-                    let greedy = match self.nextchar() {
+                    let greedy = match self.nextchar(1) {
                         Some(c) if c == '?' => false,
                         Some(_) => true,
                         None => true,
@@ -225,33 +248,29 @@ impl Parser {
                     self.parse_repeat(curr, greedy)?;
                 }
                 '|' => self.parse_alter()?,
-                '(' => {
-                    self.pos += 1;
-                    self.stack.push(Ast::Lparen(self.pos));
-                    self.takechar();
-                }
+                '(' => self.parse_paren()?,
                 ')' => self.parse_group()?,
                 '^' => {
                     if self.off != 0 {
                         return Err(SyntaxError::new(self.off, HatAssertPosition));
                     }
                     hat = true;
-                    self.takechar();
+                    self.takechar(1);
                 }
                 '$' => {
                     if self.off != self.chars.len() - 1 {
                         return Err(SyntaxError::new(self.off, DollarAssertPosition));
                     }
                     dollar = true;
-                    self.takechar();
+                    self.takechar(1);
                 }
                 '.' => {
                     self.stack.push(Ast::AnyChar);
-                    self.takechar();
+                    self.takechar(1);
                 }
                 _ => {
                     self.stack.push(Ast::Char(curr));
-                    self.takechar();
+                    self.takechar(1);
                 }
             }
         }
@@ -267,7 +286,7 @@ impl Parser {
             chars: pat.chars().collect(),
             off: 0,
             stack: vec![],
-            pos: 0,
+            paren: 0,
         }.parse_regex()
     }
 }
@@ -303,6 +322,7 @@ mod tests {
         };
 
         ( ($idx:tt $t:tt) )  => { Ast::Group($idx, Box::new(ast!($t))) };
+        ( ( $t:tt ) )        => { Ast::NonCapGroup(Box::new(ast!($t))) };
         ( $c:expr )          => { Ast::Char($c) };
         ( . )                => { Ast::AnyChar };
     }
@@ -333,7 +353,6 @@ mod tests {
         assert_parse!(r"a+|b*", ast!((| (+ 'a'), (* 'b'))), false, false);
         assert_parse!(r".", ast!(.), false, false);
         assert_parse!(r"a..b", ast!((& 'a', ., ., 'b')), false, false);
-
         assert_parse!(r"(a)", ast!((1 'a')), false, false);
         assert_parse!(r"(ab)", ast!((1 (& 'a', 'b'))), false, false);
         assert_parse!(r"(ab)+", ast!((+ (1 (& 'a', 'b')))), false, false);
@@ -344,12 +363,13 @@ mod tests {
         assert_parse!(r"(a|b)(c|d)", ast!((& (1 (| 'a', 'b')), (2 (| 'c', 'd')))), false, false);
         assert_parse!(r"(a)|(b)", ast!((| (1 'a'), (2 'b'))), false, false);
         assert_parse!(r"(((quoi?)))", ast!((1 (2 (3 (& 'q', 'u', 'o', (? 'i')))))), false, false);
-
         assert_parse!(r"^abc", ast!((& 'a', 'b', 'c')), true, false);
         assert_parse!(r"abc$", ast!((& 'a', 'b', 'c')), false, true);
         assert_parse!(r"^abc$", ast!((& 'a', 'b', 'c')), true, true);
         assert_parse!(r"^\^a\^c$", ast!((& '^', 'a', '^', 'c')), true, true);
         assert_parse!(r"^a\$c\$$", ast!((& 'a', '$', 'c', '$')), true, true);
+        assert_parse!(r"(?:abc)", ast!(((& 'a', 'b', 'c'))), false, false);
+        assert_parse!(r"(?:ab(c))", ast!(((& 'a', 'b', (1 'c')))), false, false);
 
         // The bad
         assert_err!(r"+", SyntaxError::new(0, NothingToRepeat));
@@ -366,12 +386,12 @@ mod tests {
         assert_err!(r"a)", SyntaxError::new(2, UnmatchedParen));
         assert_err!(r"()", SyntaxError::new(2, EmptyRegex));
         assert_err!(r"", SyntaxError::new(0, EmptyRegex));
-
         assert_err!(r"a^b", SyntaxError::new(1, HatAssertPosition));
         assert_err!(r"ab^", SyntaxError::new(2, HatAssertPosition));
         assert_err!(r"$ab", SyntaxError::new(0, DollarAssertPosition));
         assert_err!(r"a$b", SyntaxError::new(1, DollarAssertPosition));
-
         assert_err!(r"a\b", SyntaxError::new(2, UnknownEscape));
+        assert_err!(r"(?abc)", SyntaxError::new(2, UnknownGroupExt));
+        assert_err!(r"(?:)", SyntaxError::new(4, EmptyRegex));
     }
 }

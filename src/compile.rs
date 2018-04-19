@@ -202,10 +202,12 @@ impl Compiler {
         Ok(last_patch)
     }
 
-    fn compile_group(&mut self, i: u8, ast: &Ast) -> Result<Patch, Error> {
-        if i >= NGROUPS {
-            return self.compile_ast(ast);
-        }
+    fn compile_group(&mut self, ii: Option<u8>, ast: &Ast) -> Result<Patch, Error> {
+        let i = match ii {
+            None => return self.compile_ast(ast),
+            Some(i) if i >= NGROUPS => return self.compile_ast(ast),
+            Some(i) => i,
+        };
         let save_begin = self.emit(Inst::Save(i * 2));
         let patch = self.compile_ast(ast)?;
         let save_end = self.emit(Inst::Save(i * 2 + 1));
@@ -228,7 +230,8 @@ impl Compiler {
             }
             &Ast::Alter(ref r) => self.compile_alter(r),
             &Ast::Concat(ref r) => self.compile_concat(r),
-            &Ast::Group(idx, ref r) => self.compile_group(idx, r),
+            &Ast::Group(idx, ref r) => self.compile_group(Some(idx), r),
+            &Ast::NonCapGroup(ref r) => self.compile_group(None, r),
             _ => Err(Error::new("placeholder".to_string())),
         }
     }
@@ -457,6 +460,19 @@ mod tests {
             i!(save 6),
             i!(char 'c'),
             i!(save 7),
+            i!(save 5),
+            i!(save 1),
+            i!(match)
+        });
+
+        assert_compile!(Parser::parse(r"(a)(?:b(c))").unwrap(), p! {
+            i!(save 0),
+            i!(save 2),
+            i!(char 'a'),
+            i!(save 3),
+            i!(char 'b'),
+            i!(save 4),
+            i!(char 'c'),
             i!(save 5),
             i!(save 1),
             i!(match)
