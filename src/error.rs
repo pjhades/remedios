@@ -10,6 +10,7 @@ pub enum SyntaxErrorKind {
     EmptyRegex,
     HatAssertPosition,
     DollarAssertPosition,
+    UnknownGroupExt,
 }
 
 #[derive(Debug)]
@@ -46,6 +47,7 @@ impl From<SyntaxError> for Error {
             SyntaxErrorKind::EmptyRegex => "empty regex",
             SyntaxErrorKind::HatAssertPosition => "hat assertion can only occur at the beginning",
             SyntaxErrorKind::DollarAssertPosition => "dollar assertion can only occur at the end",
+            SyntaxErrorKind::UnknownGroupExt => "unknown capturing group extension",
         }))
     }
 }

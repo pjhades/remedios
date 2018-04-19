@@ -235,6 +235,7 @@ mod tests {
         assert_match_groups!(r"(a)", "a", (0, 0, 1), (1, 0, 1));
         assert_match_groups!(r"(a)(b)", "ab", (0, 0, 2), (1, 0, 1), (2, 1, 2));
         assert_match_groups!(r"(a|b)+d", "abaabd", (0, 0, 6), (1, 4, 5));
+        assert_match_groups!(r"(a)(?:b(c)d)", "abcd", (0, 0, 4), (1, 0, 1), (2, 2, 3));
         assert_match_groups!(r"((a|b)+)d", "abaabd", (0, 0, 6), (1, 0, 5), (2, 4, 5));
         assert_match_groups!(r"(a(b)|c(d))+x", "abcdx", (0, 0, 5), (1, 2, 4), (2, 1, 2), (3, 3, 4));
         assert_match_groups!(r"(a(b(c)))d", "abcd", (0, 0, 4), (1, 0, 3), (2, 1, 3), (3, 2, 3));
