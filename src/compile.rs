@@ -232,7 +232,7 @@ impl Compiler {
             &Ast::Concat(ref r) => self.compile_concat(r),
             &Ast::Group(idx, ref r) => self.compile_group(Some(idx), r),
             &Ast::NonCapGroup(ref r) => self.compile_group(None, r),
-            _ => Err(Error::new("placeholder".to_string())),
+            _ => Err(Error::new(format!("invalid ast node {:?}", ast))),
         }
     }
 

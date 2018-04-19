@@ -116,7 +116,7 @@ impl Parser {
                     break;
                 }
                 Some(paren @ Ast::Lparen(_)) |
-                Some(paren @ Ast::NonCapLparen)=> {
+                Some(paren @ Ast::NonCapLparen) => {
                     self.stack.push(paren);
                     self.push_alter(terms, None)?;
                     break;
