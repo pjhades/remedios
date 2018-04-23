@@ -1,12 +1,18 @@
 [package]
-name = "bench"
+name = "benchmark"
 version = "0.1.0"
 authors = ["Jing Peng <pj.hades@gmail.com>"]
+build = "build.rs"
 
 [profile.release]
 opt-level = 3
 debug = false
 
+[lib]
+name = "benchmark"
+path = "src/lib.rs"
+
 [dependencies]
+libc = "0.2.40"
 remedios = { path = "../" }
 rand = "0.4.2"

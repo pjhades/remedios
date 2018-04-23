@@ -1,11 +1,14 @@
 #![feature(test)]
 
+extern crate benchmark;
+
 extern crate rand;
 extern crate remedios;
 extern crate test;
 
 use rand::{Rng, thread_rng};
-use remedios::{MatchResult, re_match};
+use remedios::{MatchResult, rematch};
+use benchmark::pcre2;
 
 const RE_RNA: &str = r"^((A|C|G|T)?)*(A|C|G|T)*$";
 
@@ -20,12 +23,13 @@ fn rna_of_len(len: usize) -> String {
 }
 
 fn main() {
-    let rna = rna_of_len(1000000);
-    let m = re_match(RE_RNA, &rna).unwrap();
-    assert!(match m {
-        MatchResult::Match(_) => true,
-        _ => false,
-    });
+    let rna = rna_of_len(100000000);
+    //let m = rematch(RE_RNA, &rna).unwrap();
+    //assert!(match m {
+    //    MatchResult::Match(_) => true,
+    //    _ => false,
+    //});
+    println!("{}", pcre2::rematch(RE_RNA, &rna).unwrap());
 }
 
 #[cfg(test)]
@@ -38,7 +42,7 @@ mod tests {
             #[bench]
             fn $func(b: &mut Bencher) {
                 let rna = rna_of_len($len);
-                b.iter(|| { re_match(RE_RNA, &rna).unwrap(); });
+                b.iter(|| { rematch(RE_RNA, &rna).unwrap(); });
             }
         };
     }
