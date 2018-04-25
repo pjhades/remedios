@@ -1,6 +1,5 @@
 #![allow(non_camel_case_types)]
 
-use rand::{Rng, thread_rng};
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
@@ -14,7 +13,7 @@ type pcre2_match_context = c_void;
 const PCRE2_ERROR_NOMATCH: i32 = -1;
 
 #[link(name = "pcre2-8")]
-extern "C" {
+extern {
     fn pcre2_compile_8(
         pattern: *mut c_char,
         len: usize,
@@ -39,8 +38,8 @@ extern "C" {
         ctx: *mut pcre2_match_context
     ) -> i32;
 
-    fn pcre2_match_data_free(data: *mut pcre2_match_data) -> c_void;
-    fn pcre2_code_free(code: *mut pcre2_code) -> c_void;
+    fn pcre2_match_data_free_8(data: *mut pcre2_match_data) -> c_void;
+    fn pcre2_code_free_8(code: *mut pcre2_code) -> c_void;
 }
 
 pub fn rematch(pattern: &str, text: &str) -> Result<bool, String> {
@@ -77,10 +76,20 @@ pub fn rematch(pattern: &str, text: &str) -> Result<bool, String> {
             ptr::null_mut())
     };
     if ret < 0 {
+        unsafe {
+            pcre2_match_data_free_8(data);
+            pcre2_code_free_8(code);
+        }
+
         if ret == PCRE2_ERROR_NOMATCH {
             return Ok(false);
         }
         return Err("match error".to_string());
+    }
+
+    unsafe {
+        pcre2_match_data_free_8(data);
+        pcre2_code_free_8(code);
     }
 
     Ok(true)
