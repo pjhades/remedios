@@ -4,19 +4,21 @@ version = "0.1.0"
 authors = ["Jing Peng <pj.hades@gmail.com>"]
 build = "build.rs"
 
-[profile.debug]
-opt-level = 3
-debug = false
-
 [profile.release]
 opt-level = 3
-debug = false
+debug = true
+
+[profile.bench]
+opt-level = 3
+debug = true
 
 [lib]
 name = "benchmark"
 path = "src/lib.rs"
 
 [dependencies]
-libc = "0.2.40"
+libc = "^0.2.40"
 remedios = { path = "../" }
-rand = "0.4.2"
+rand = "^0.4.2"
+regex = "^0.2"
+time = "^0.1"
