@@ -8,7 +8,7 @@ extern crate test;
 
 use rand::{Rng, thread_rng};
 //use remedios::{MatchResult, rematch};
-use benchmark::{pcre2, oniguruma};
+use benchmark::{pcre2, oniguruma, re2};
 
 const RE_RNA: &str = r"^((A|C|G|T)?)*(A|C|G|T)*$";
 
@@ -31,6 +31,7 @@ fn main() {
     //});
     println!("{}", pcre2::rematch(RE_RNA, &rna).unwrap());
     println!("{}", oniguruma::rematch(RE_RNA, &rna).unwrap());
+    println!("{}", re2::rematch(RE_RNA, &rna).unwrap());
 }
 
 #[cfg(test)]
