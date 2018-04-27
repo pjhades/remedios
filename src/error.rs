@@ -11,6 +11,9 @@ pub enum SyntaxErrorKind {
     HatAssertPosition,
     DollarAssertPosition,
     UnknownGroupExt,
+    NonAsciiNotSupported,
+    UnterminatedCharset,
+    InvalidCharacterRange,
 }
 
 #[derive(Debug)]
@@ -48,6 +51,9 @@ impl From<SyntaxError> for Error {
             SyntaxErrorKind::HatAssertPosition => "hat assertion can only occur at the beginning",
             SyntaxErrorKind::DollarAssertPosition => "dollar assertion can only occur at the end",
             SyntaxErrorKind::UnknownGroupExt => "unknown capturing group extension",
+            SyntaxErrorKind::NonAsciiNotSupported => "non ascii characters are not supported",
+            SyntaxErrorKind::UnterminatedCharset => "unterminated character set",
+            SyntaxErrorKind::InvalidCharacterRange => "invalid character range",
         }))
     }
 }

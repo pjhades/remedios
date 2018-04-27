@@ -1,7 +1,8 @@
-mod error;
-mod parse;
-mod compile;
-mod vm;
+pub mod charset;
+pub mod error;
+pub mod parse;
+pub mod compile;
+pub mod vm;
 
 use error::Error;
 use vm::Vm;

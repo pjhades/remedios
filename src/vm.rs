@@ -134,6 +134,14 @@ impl<'a> Vm<'a> {
                             }
                         }
                     }
+                    &Inst::Charset(ref cs) => {
+                        if sidx < s.len() && cs.has(s[sidx]) {
+                            t.pc += 1;
+                            if self.epsilon(t, sidx + 1, slen, &mut next) {
+                                break;
+                            }
+                        }
+                    }
                     _ => {
                         if self.epsilon(t, sidx, slen, &mut next) {
                             break;
@@ -220,6 +228,14 @@ mod tests {
         assert_match!(r"^a*$", "aaaaaaa");
         assert_match!(r"^...$", "aaa");
         assert_match!(r"aaa", "xxxxxaaaxxxxx");
+        assert_match!(r"[abc]", "a");
+        assert_match!(r"[^abc]", "x");
+        assert_match!(r"[a-c][a-c][a-c]", "abc");
+        assert_match!(r"^[-c]+$", "c--");
+        assert_match!(r"[a^c]", "^");
+        assert_match!(r"[-]", "-");
+        assert_match!(r"^[a-zA-Z0-9. ]+$", "Of course I still love you.");
+        assert_match!(r"^[a-zA-Z0-9. ]+$", "Just read the instructions.");
 
         assert_match_groups!(r"a*", "aaa", (0, 0, 3));
         assert_match_groups!(r"a*?", "aaa", (0, 0, 0));
