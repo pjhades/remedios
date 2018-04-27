@@ -1,3 +1,4 @@
+use charset::Charset;
 use error::SyntaxError;
 use error::SyntaxErrorKind::*;
 use std::boxed::Box;
@@ -26,6 +27,7 @@ pub struct Rep {
 #[derive(Debug, PartialEq)]
 pub enum Ast {
     Char(char),
+    Charset(Charset),
     AnyChar,
     Rep(Rep),
     Alter(Vec<Ast>),
@@ -44,8 +46,13 @@ pub struct Parser {
 }
 
 impl Parser {
-    fn currchar(&self) -> char {
-        self.chars[self.off]
+    fn currchar(&self) -> Option<char> {
+        if self.off >= self.chars.len() {
+            None
+        }
+        else {
+            Some(self.chars[self.off])
+        }
     }
 
     fn nextchar(&self, off: usize) -> Option<char> {
@@ -64,6 +71,7 @@ impl Parser {
     fn parse_repeat(&mut self, repchar: char, greedy: bool) -> Result<(), SyntaxError> {
         match self.stack.pop() {
             Some(e @ Ast::Char(..)) |
+            Some(e @ Ast::Charset(..)) |
             Some(e @ Ast::AnyChar) |
             Some(e @ Ast::Group(..)) => {
                 let kind = match repchar {
@@ -147,10 +155,10 @@ impl Parser {
     fn parse_push_esc(&mut self) -> Result<(), SyntaxError> {
         self.takechar(1);
         let esc =  match self.currchar() {
-            'n' => '\n',
-            't' => '\t',
-            '^' => '^',
-            '$' => '$',
+            Some('n') => '\n',
+            Some('t') => '\t',
+            Some('^') => '^',
+            Some('$') => '$',
             _ => return Err(SyntaxError::new(self.off, UnknownEscape)),
         };
         self.stack.push(Ast::Char(esc));
@@ -218,7 +226,7 @@ impl Parser {
             match self.nextchar(2) {
                 Some(':') => {
                     self.stack.push(Ast::NonCapLparen);
-                    self.takechar(3); // take (?:
+                    self.takechar(3); // take '(' '?' ':'
                 }
                 _ => return Err(SyntaxError::new(self.off + 2, UnknownGroupExt)),
             }
@@ -226,8 +234,120 @@ impl Parser {
         else {
             self.paren += 1;
             self.stack.push(Ast::Lparen(self.paren));
-            self.takechar(1); // take (
+            self.takechar(1); // take '('
         }
+        Ok(())
+    }
+
+    fn may_close_char_range(&mut self, cs: &mut Charset, need_hi: &mut bool, lb: &mut Option<u8>,
+                            c: char) -> Result<(), SyntaxError> {
+        if !*need_hi {
+            if !cs.add(c) {
+                return Err(SyntaxError::new(self.off, NonAsciiNotSupported));
+            }
+            *lb = Some(c as u8);
+        }
+        else {
+            if !cs.add(c) {
+                return Err(SyntaxError::new(self.off, NonAsciiNotSupported));
+            }
+            if let None = *lb {
+                return Err(SyntaxError::new(self.off, InvalidCharacterRange));
+            }
+
+            let (lo, hi) = (lb.unwrap(), c as u8);
+            if hi < lo {
+                return Err(SyntaxError::new(self.off, InvalidCharacterRange));
+            }
+            for b in lo + 1 .. hi {
+                cs.add(b as char);
+            }
+
+            // Reset the states to start over.
+            *lb = None;
+            *need_hi = false;
+        }
+        Ok(())
+    }
+
+    fn parse_charset(&mut self) -> Result<(), SyntaxError> {
+        self.takechar(1); // take '['
+
+        let first_char_pos = self.off;
+        let mut cs = Charset::new();
+        // Should we read the higher bound of a range next?
+        let mut need_hi = false;
+        // Is this set complemented?
+        let complemented = match self.currchar() {
+            Some('^') => {
+                self.takechar(1);
+                true
+            }
+            _ => false,
+        };
+        // The possible range lower bound. We will need this when
+        // we find the corresponding higher bound. Otherwise we update
+        // it every time we read a single character, since each character
+        // may be possible a range lower bound. Here we use a 0xff to
+        // represent that there's no lower bound found so far. This happens
+        // when we are at the very beginning of the character set, or we
+        // have just finished parsing a previous range.
+        let mut lb = None;
+
+        loop {
+            match self.currchar() {
+                None => return Err(SyntaxError::new(self.off, UnterminatedCharset)),
+                Some(']') => {
+                    if self.off == first_char_pos {
+                        // ']' is treated as a literal only at the beginning
+                        // or when it's escaped.
+                        cs.add(']');
+                        self.takechar(1);
+                        lb = Some(']' as u8);
+                    }
+                    else {
+                        break;
+                    }
+                }
+                Some('-') => {
+                    if self.off == first_char_pos {
+                        // ']' is treated as a literal only at the beginning ...
+                        cs.add('-');
+                        lb = Some('-' as u8);
+                    }
+                    else if let Some(']') = self.nextchar(1) {
+                        // ... or the end, or when it's escaped (see another arm).
+                        self.may_close_char_range(&mut cs, &mut need_hi, &mut lb, '-')?;
+                    }
+                    else if let None = lb {
+                        return Err(SyntaxError::new(self.off, InvalidCharacterRange));
+                    }
+                    else {
+                        need_hi = true;
+                    }
+
+                    self.takechar(1);
+                }
+                Some('\\') => {
+                    match self.nextchar(1) {
+                        None => return Err(SyntaxError::new(self.off + 1, UnterminatedCharset)),
+                        Some(c @ _) => self.may_close_char_range(&mut cs, &mut need_hi, &mut lb, c)?,
+                    }
+                    self.takechar(2);
+                }
+                Some(c @ _) => {
+                    self.may_close_char_range(&mut cs, &mut need_hi, &mut lb, c)?;
+                    self.takechar(1);
+                }
+            }
+        }
+
+        if complemented {
+            cs.complement();
+        }
+
+        self.takechar(1); // take ']'
+        self.stack.push(Ast::Charset(cs));
         Ok(())
     }
 
@@ -236,7 +356,7 @@ impl Parser {
         let mut dollar = false;
 
         while self.off < self.chars.len() {
-            let curr = self.currchar();
+            let curr = self.currchar().unwrap();
             match curr {
                 '\\' => self.parse_push_esc()?,
                 '*' | '+' | '?' => {
@@ -250,6 +370,7 @@ impl Parser {
                 '|' => self.parse_alter()?,
                 '(' => self.parse_paren()?,
                 ')' => self.parse_group()?,
+                '[' => self.parse_charset()?,
                 '^' => {
                     if self.off != 0 {
                         return Err(SyntaxError::new(self.off, HatAssertPosition));
@@ -310,21 +431,24 @@ mod tests {
         ( (& $( $t:tt ),+) ) => { Ast::Concat(vec![$( ast!($t) ),+]) };
 
         // repetitions, all are delegated to the `rep` macro
-        ( (* $t:tt) )  => { ast!((rep $t, RepKind::Star, true)) };
-        ( (*? $t:tt) ) => { ast!((rep $t, RepKind::Star, false)) };
-        ( (+ $t:tt) )  => { ast!((rep $t, RepKind::Plus, true)) };
-        ( (+? $t:tt) ) => { ast!((rep $t, RepKind::Plus, false)) };
-        ( (? $t:tt) )  => { ast!((rep $t, RepKind::Question, true)) };
-        ( (?? $t:tt) ) => { ast!((rep $t, RepKind::Question, false)) };
+        ( (* $t:tt) )    => { ast!((rep $t, RepKind::Star, true)) };
+        ( (*? $t:tt) )   => { ast!((rep $t, RepKind::Star, false)) };
+        ( (+ $t:tt) )    => { ast!((rep $t, RepKind::Plus, true)) };
+        ( (+? $t:tt) )   => { ast!((rep $t, RepKind::Plus, false)) };
+        ( (? $t:tt) )    => { ast!((rep $t, RepKind::Question, true)) };
+        ( (?? $t:tt) )   => { ast!((rep $t, RepKind::Question, false)) };
 
         ( (rep $ast:tt, $kind:expr, $greedy:expr) ) => {
             Ast::Rep(Rep { ast: Box::new(ast!($ast)), kind: $kind, greedy: $greedy, })
         };
 
-        ( ($idx:tt $t:tt) )  => { Ast::Group($idx, Box::new(ast!($t))) };
-        ( ( $t:tt ) )        => { Ast::NonCapGroup(Box::new(ast!($t))) };
-        ( $c:expr )          => { Ast::Char($c) };
-        ( . )                => { Ast::AnyChar };
+        ( (cs $($c:expr),+ ) )  => { Ast::Charset(Charset::from_chars(&[$($c),+])) };
+        ( (!cs $($c:expr),+ ) ) => { Ast::Charset(Charset::from_chars_complement(&[$($c),+])) };
+
+        ( ($idx:tt $t:tt) )    => { Ast::Group($idx, Box::new(ast!($t))) };
+        ( ( $t:tt ) )          => { Ast::NonCapGroup(Box::new(ast!($t))) };
+        ( $c:expr )            => { Ast::Char($c) };
+        ( . )                  => { Ast::AnyChar };
     }
 
     macro_rules! assert_parse {
@@ -370,6 +494,23 @@ mod tests {
         assert_parse!(r"^a\$c\$$", ast!((& 'a', '$', 'c', '$')), true, true);
         assert_parse!(r"(?:abc)", ast!(((& 'a', 'b', 'c'))), false, false);
         assert_parse!(r"(?:ab(c))", ast!(((& 'a', 'b', (1 'c')))), false, false);
+        assert_parse!(r"[abc]", ast!((cs 'a', 'b', 'c')), false, false);
+        assert_parse!(r"[^abc]", ast!((!cs 'a', 'b', 'c')), false, false);
+        assert_parse!(r"[a-c]", ast!((cs 'a', 'b', 'c')), false, false);
+        assert_parse!(r"[a-ca-e]", ast!((cs 'a', 'b', 'c', 'd', 'e')), false, false);
+        assert_parse!(r"[a-cx-z]", ast!((cs 'a', 'b', 'c', 'x', 'y', 'z')), false, false);
+        assert_parse!(r"[a-ckkkx-z]", ast!((cs 'a', 'b', 'c', 'k', 'x', 'y', 'z')), false, false);
+        assert_parse!(r"[]a]", ast!((cs 'a', ']')), false, false);
+        assert_parse!(r"[a\]b]", ast!((cs 'a', 'b', ']')), false, false);
+        assert_parse!(r"[a^b]", ast!((cs 'a', 'b', '^')), false, false);
+        assert_parse!(r"[ab-]", ast!((cs 'a', 'b', '-')), false, false);
+        assert_parse!(r"[-ab]", ast!((cs 'a', 'b', '-')), false, false);
+        assert_parse!(r"[a\-b]", ast!((cs 'a', 'b', '-')), false, false);
+        assert_parse!(r"[-\--]", ast!((cs '-')), false, false);
+        assert_parse!(r"[-\-.]", ast!((cs '-', '.')), false, false);
+        assert_parse!(r"[-a\-c^0\-3-]", ast!((cs '-', 'a', 'c', '^', '0', '3')), false, false);
+        assert_parse!(r"[^a\-c^0\-3-]", ast!((!cs '-', 'a', 'c', '^', '0', '3')), false, false);
+        assert_parse!(r"[\[\]\\\-\a]", ast!((cs 'a', '\\', '[', ']', '-')), false, false);
 
         // The bad
         assert_err!(r"+", SyntaxError::new(0, NothingToRepeat));
@@ -393,5 +534,11 @@ mod tests {
         assert_err!(r"a\b", SyntaxError::new(2, UnknownEscape));
         assert_err!(r"(?abc)", SyntaxError::new(2, UnknownGroupExt));
         assert_err!(r"(?:)", SyntaxError::new(4, EmptyRegex));
+        assert_err!(r"[]", SyntaxError::new(2, UnterminatedCharset));
+        assert_err!(r"[a-b-c]", SyntaxError::new(4, InvalidCharacterRange));
+        assert_err!(r"[z-a]", SyntaxError::new(3, InvalidCharacterRange));
+        assert_err!(r"[a\", SyntaxError::new(3, UnterminatedCharset));
+        assert_err!(r"[^-p]", SyntaxError::new(2, InvalidCharacterRange));
+        assert_err!(r"[虎]", SyntaxError::new(1, NonAsciiNotSupported));
     }
 }

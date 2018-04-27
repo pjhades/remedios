@@ -1,4 +1,5 @@
 use ::NGROUPS;
+use charset::Charset;
 use error::Error;
 use parse::{Ast, RepKind, Parsed};
 use std::fmt;
@@ -33,6 +34,7 @@ pub enum Inst {
     AssertHat,
     AssertDollar,
     Char(CharKind),
+    Charset(Charset),
     // The first branch has higher priority.
     Split(Ip, Ip),
     Jump(Ip),
@@ -57,6 +59,7 @@ impl fmt::Debug for Prog {
             match inst {
                 &Inst::Match => writeln!(f, "match")?,
                 &Inst::Char(ref k) => writeln!(f, "{:?}", k)?,
+                &Inst::Charset(ref cs) => writeln!(f, "charset {:?}", cs)?,
                 &Inst::Split(x, y) => writeln!(f, "split {:0w$x} {:0w$x}", x, y, w=width)?,
                 &Inst::Jump(x) => writeln!(f, "jump {:0w$x}", x, w=width)?,
                 &Inst::Save(i) => writeln!(f, "save {}", i)?,
@@ -100,6 +103,11 @@ impl Compiler {
 
     fn compile_char(&mut self, kind: CharKind) -> Result<Patch, Error> {
         let ip = self.emit(Inst::Char(kind));
+        Ok(Patch { entry: ip, holes: vec![] })
+    }
+
+    fn compile_charset(&mut self, cs: Charset) -> Result<Patch, Error> {
+        let ip = self.emit(Inst::Charset(cs));
         Ok(Patch { entry: ip, holes: vec![] })
     }
 
@@ -220,6 +228,7 @@ impl Compiler {
     fn compile_ast(&mut self, ast: &Ast) -> Result<Patch, Error> {
         match ast {
             &Ast::Char(c) => self.compile_char(CharKind::Char(c)),
+            &Ast::Charset(ref cs) => self.compile_charset((*cs).clone()),
             &Ast::AnyChar => self.compile_char(CharKind::AnyChar),
             &Ast::Rep(ref rep) => {
                 match rep.kind {
@@ -281,6 +290,7 @@ mod tests {
     macro_rules! i {
         ( match ) => { Inst::Match };
         ( char $c:expr ) => { Inst::Char(CharKind::Char($c)) };
+        ( charset $($c:expr),+ ) => { Inst::Charset(Charset::from_chars(&[$($c),+])) };
         ( anychar )      => { Inst::Char(CharKind::AnyChar) };
         ( split $x:expr, $y:expr ) => { Inst::Split($x, $y) };
         ( jump $x:expr ) => { Inst::Jump($x) };
@@ -499,6 +509,13 @@ mod tests {
             i!(save 7),
             i!(save 5),
             i!(save 3),
+            i!(save 1),
+            i!(match)
+        });
+
+        assert_compile!(Parser::parse(r"[abc]").unwrap(), p! {
+            i!(save 0),
+            i!(charset 'a', 'b', 'c'),
             i!(save 1),
             i!(match)
         });
