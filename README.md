@@ -6,6 +6,7 @@ Toy regular expression library.
 
 ## Features implemented so far
 
+* Any-character matching `.`
 * Basic repetitions `*`, `+`, `?`
 * Non-greedy repetitions `*?`, `+?`, `??`
 * Capturing groups
