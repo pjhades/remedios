@@ -239,104 +239,67 @@ impl Parser {
         Ok(())
     }
 
-    fn may_close_char_range(&mut self, cs: &mut Charset, need_hi: &mut bool, lb: &mut Option<u8>,
-                            c: char) -> Result<(), SyntaxError> {
-        if !*need_hi {
-            if !cs.add(c) {
-                return Err(SyntaxError::new(self.off, NonAsciiNotSupported));
-            }
-            *lb = Some(c as u8);
-        }
-        else {
-            if !cs.add(c) {
-                return Err(SyntaxError::new(self.off, NonAsciiNotSupported));
-            }
-            if let None = *lb {
-                return Err(SyntaxError::new(self.off, InvalidCharacterRange));
-            }
-
-            let (lo, hi) = (lb.unwrap(), c as u8);
-            if hi < lo {
-                return Err(SyntaxError::new(self.off, InvalidCharacterRange));
-            }
-            for b in lo + 1 .. hi {
-                cs.add(b as char);
-            }
-
-            // Reset the states to start over.
-            *lb = None;
-            *need_hi = false;
-        }
-        Ok(())
-    }
-
     fn parse_charset(&mut self) -> Result<(), SyntaxError> {
         self.takechar(1); // take '['
 
-        let first_char_pos = self.off;
+        let mut complemented = false;
         let mut cs = Charset::new();
-        // Should we read the higher bound of a range next?
-        let mut need_hi = false;
-        // Is this set complemented?
-        let complemented = match self.currchar() {
-            Some('^') => {
+
+        if let Some('^') = self.currchar() {
+            complemented = true;
+            self.takechar(1);
+        }
+
+        let mut prevchar = match self.currchar() {
+            Some(c @ '-') | Some(c @ ']') => {
+                cs.add(c);
                 self.takechar(1);
-                true
+                Some(c)
             }
-            _ => false,
+            _ => None,
         };
-        // The possible range lower bound. We will need this when
-        // we find the corresponding higher bound. Otherwise we update
-        // it every time we read a single character, since each character
-        // may be possible a range lower bound. Here we use a 0xff to
-        // represent that there's no lower bound found so far. This happens
-        // when we are at the very beginning of the character set, or we
-        // have just finished parsing a previous range.
-        let mut lb = None;
+        let mut pending_range = false;
+        let mut escape = false;
 
         loop {
             match self.currchar() {
                 None => return Err(SyntaxError::new(self.off, UnterminatedCharset)),
-                Some(']') => {
-                    if self.off == first_char_pos {
-                        // ']' is treated as a literal only at the beginning
-                        // or when it's escaped.
-                        cs.add(']');
-                        self.takechar(1);
-                        lb = Some(']' as u8);
-                    }
-                    else {
-                        break;
-                    }
-                }
-                Some('-') => {
-                    if self.off == first_char_pos {
-                        // ']' is treated as a literal only at the beginning ...
+                Some(']') if !escape => break,
+                Some('-') if !escape => {
+                    if let Some(']') = self.nextchar(1) {
                         cs.add('-');
-                        lb = Some('-' as u8);
+                        self.takechar(1);
+                        continue;
                     }
-                    else if let Some(']') = self.nextchar(1) {
-                        // ... or the end, or when it's escaped (see another arm).
-                        self.may_close_char_range(&mut cs, &mut need_hi, &mut lb, '-')?;
-                    }
-                    else if let None = lb {
+                    if let None = prevchar {
                         return Err(SyntaxError::new(self.off, InvalidCharacterRange));
                     }
-                    else {
-                        need_hi = true;
-                    }
-
+                    pending_range = true;
                     self.takechar(1);
                 }
-                Some('\\') => {
-                    match self.nextchar(1) {
-                        None => return Err(SyntaxError::new(self.off + 1, UnterminatedCharset)),
-                        Some(c @ _) => self.may_close_char_range(&mut cs, &mut need_hi, &mut lb, c)?,
-                    }
-                    self.takechar(2);
+                Some('\\') if !escape => {
+                    escape = true;
+                    self.takechar(1);
                 }
                 Some(c @ _) => {
-                    self.may_close_char_range(&mut cs, &mut need_hi, &mut lb, c)?;
+                    if !cs.add(c) {
+                        return Err(SyntaxError::new(self.off, NonAsciiNotSupported));
+                    }
+                    if pending_range {
+                        let lb = prevchar.unwrap();
+                        if lb as u8 > c as u8 {
+                            return Err(SyntaxError::new(self.off, InvalidCharacterRange));
+                        }
+                        for byte in lb as u8 + 1 .. c as u8 {
+                            cs.add(byte as char);
+                        }
+                        pending_range = false;
+                        prevchar = None;
+                    }
+                    else {
+                        prevchar = Some(c);
+                    }
+                    escape = false;
                     self.takechar(1);
                 }
             }
@@ -419,7 +382,9 @@ mod tests {
     macro_rules! assert_err {
         ( $re:expr, $expected:expr ) => {
             {
-                let e = Parser::parse($re).unwrap_err();
+                let e = Parser::parse($re);
+                assert!(e.is_err());
+                let e = e.unwrap_err();
                 assert_eq!(e.off, $expected.off);
                 assert_eq!(e.kind, $expected.kind);
             }
@@ -453,7 +418,9 @@ mod tests {
 
     macro_rules! assert_parse {
         ( $re:expr, $ast:expr, $hat:expr, $dollar:expr ) => {
-            let parsed = Parser::parse($re).unwrap();
+            let parsed = Parser::parse($re);
+            assert!(parsed.is_ok());
+            let parsed = parsed.unwrap();
             assert_eq!(parsed.ast, $ast);
             assert_eq!(parsed.hat, $hat);
             assert_eq!(parsed.dollar, $dollar);
@@ -508,6 +475,8 @@ mod tests {
         assert_parse!(r"[a\-b]", ast!((cs 'a', 'b', '-')), false, false);
         assert_parse!(r"[-\--]", ast!((cs '-')), false, false);
         assert_parse!(r"[-\-.]", ast!((cs '-', '.')), false, false);
+        assert_parse!(r"[^--]", ast!((!cs '-')), false, false);
+        assert_parse!(r"[^]-]", ast!((!cs '-', ']')), false, false);
         assert_parse!(r"[-a\-c^0\-3-]", ast!((cs '-', 'a', 'c', '^', '0', '3')), false, false);
         assert_parse!(r"[^a\-c^0\-3-]", ast!((!cs '-', 'a', 'c', '^', '0', '3')), false, false);
         assert_parse!(r"[\[\]\\\-\a]", ast!((cs 'a', '\\', '[', ']', '-')), false, false);
@@ -538,7 +507,6 @@ mod tests {
         assert_err!(r"[a-b-c]", SyntaxError::new(4, InvalidCharacterRange));
         assert_err!(r"[z-a]", SyntaxError::new(3, InvalidCharacterRange));
         assert_err!(r"[a\", SyntaxError::new(3, UnterminatedCharset));
-        assert_err!(r"[^-p]", SyntaxError::new(2, InvalidCharacterRange));
         assert_err!(r"[虎]", SyntaxError::new(1, NonAsciiNotSupported));
     }
 }
