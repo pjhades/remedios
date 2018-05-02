@@ -236,6 +236,22 @@ mod tests {
         assert_match!(r"[-]", "-");
         assert_match!(r"^[a-zA-Z0-9. ]+$", "Of course I still love you.");
         assert_match!(r"^[a-zA-Z0-9. ]+$", "Just read the instructions.");
+        assert_match!(r"^a{3}$", "aaa");
+        assert_match!(r"^a{3,}$", "aaa");
+        assert_match!(r"^a{3,}$", "aaaaaaa");
+        assert_match!(r"^a{,3}$", "");
+        assert_match!(r"^a{,3}$", "a");
+        assert_match!(r"^a{,3}$", "aaa");
+        assert_match!(r"^a{3,3}$", "aaa");
+        assert_match!(r"^a{3,5}$", "aaa");
+        assert_match!(r"^a{3,5}$", "aaaa");
+        assert_match!(r"^a{3,5}$", "aaaaa");
+        assert_match!(r"^a{,}$", "");
+        assert_match!(r"^a{,}$", "a");
+        assert_match!(r"^a{,}$", "a");
+        assert_match!(r"^[0-9a-zA-Z]{3,5}$", "0xA");
+        assert_match!(r"^[0-9a-zA-Z]{3,5}$", "0xab");
+        assert_match!(r"^[0-9a-zA-Z]{3,5}$", "0xa1b");
 
         assert_match_groups!(r"a*", "aaa", (0, 0, 3));
         assert_match_groups!(r"a*?", "aaa", (0, 0, 0));
@@ -260,6 +276,10 @@ mod tests {
                                                           (3, 0, 1), (4, 0, 1), (5, 0, 1),
                                                           (6, 0, 1), (7, 0, 1), (8, 0, 1),
                                                           (9, 0, 1));
+        assert_match_groups!(r"a{3,}?", "aaaaaaa", (0, 0, 3));
+        assert_match_groups!(r"a{3,5}?", "aaa", (0, 0, 3));
+        assert_match_groups!(r"a{3,5}?", "aaaa", (0, 0, 3));
+        assert_match_groups!(r"a{3,5}?", "aaaaa", (0, 0, 3));
 
         // The bad
         assert_not_match!(r"a", "b");
@@ -271,5 +291,9 @@ mod tests {
         assert_not_match!(r"aaa$", "aaaxxxxx");
         assert_not_match!(r"^aaa", "xxxxxaaa");
         assert_not_match!(r"aaa", "xxxxxaaxxxx");
+        assert_not_match!(r"a{3}", "aa");
+        assert_not_match!(r"a{3,5}", "a");
+        assert_not_match!(r"a{3,5}", "aa");
+        assert_not_match!(r"^a{3,5}$", "aaaaaa");
     }
 }
