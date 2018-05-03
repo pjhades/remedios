@@ -3,6 +3,7 @@ use charset::Charset;
 use error::Error;
 use parse::{Ast, RepKind, Parsed};
 use std::fmt;
+use std::boxed::Box;
 
 // It should be usize to be theoretically correct,
 // but I need to encode the "hole" in this addr,
@@ -34,7 +35,7 @@ pub enum Inst {
     AssertHat,
     AssertDollar,
     Char(CharKind),
-    Charset(Charset),
+    Charset(Box<Charset>),
     // The first branch has higher priority.
     Split(Ip, Ip),
     Jump(Ip),
@@ -106,7 +107,7 @@ impl Compiler {
         Ok(Patch { entry: ip, holes: vec![] })
     }
 
-    fn compile_charset(&mut self, cs: Charset) -> Result<Patch, Error> {
+    fn compile_charset(&mut self, cs: Box<Charset>) -> Result<Patch, Error> {
         let ip = self.emit(Inst::Charset(cs));
         Ok(Patch { entry: ip, holes: vec![] })
     }
@@ -228,7 +229,7 @@ impl Compiler {
     fn compile_ast(&mut self, ast: &Ast) -> Result<Patch, Error> {
         match ast {
             &Ast::Char(c) => self.compile_char(CharKind::Char(c)),
-            &Ast::Charset(ref cs) => self.compile_charset((*cs).clone()),
+            &Ast::Charset(ref cs) => self.compile_charset(Box::new((*cs).clone())),
             &Ast::AnyChar => self.compile_char(CharKind::AnyChar),
             &Ast::Rep(ref rep) => {
                 match rep.kind {
@@ -290,7 +291,7 @@ mod tests {
     macro_rules! i {
         ( match ) => { Inst::Match };
         ( char $c:expr ) => { Inst::Char(CharKind::Char($c)) };
-        ( charset $($c:expr),+ ) => { Inst::Charset(Charset::from_chars(&[$($c),+])) };
+        ( charset $($c:expr),+ ) => { Inst::Charset(Box::new(Charset::from_chars(&[$($c),+]))) };
         ( anychar )      => { Inst::Char(CharKind::AnyChar) };
         ( split $x:expr, $y:expr ) => { Inst::Split($x, $y) };
         ( jump $x:expr ) => { Inst::Jump($x) };
