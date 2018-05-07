@@ -10,21 +10,20 @@ pub struct Parsed {
     pub dollar: bool,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum RepKind {
     Star,
-    Plus,
     Question,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Rep {
     pub ast: Box<Ast>,
     pub kind: RepKind,
     pub greedy: bool,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Ast {
     Char(char),
     Charset(Charset),
@@ -68,32 +67,143 @@ impl Parser {
         self.off += off
     }
 
-    fn parse_repeat(&mut self, repchar: char, greedy: bool) -> Result<(), SyntaxError> {
-        match self.stack.pop() {
-            Some(e @ Ast::Char(..)) |
-            Some(e @ Ast::Charset(..)) |
-            Some(e @ Ast::AnyChar) |
-            Some(e @ Ast::Group(..)) => {
-                let kind = match repchar {
-                    '*' => RepKind::Star,
-                    '+' => RepKind::Plus,
-                    '?' => RepKind::Question,
-                    _ => unreachable!("unknown repetition {}", repchar),
-                };
-                let rep = Rep { ast: Box::new(e), kind, greedy };
-                self.stack.push(Ast::Rep(rep));
+    fn parse_int(&mut self) -> Option<usize> {
+        match self.currchar() {
+            None => return None,
+            Some(c) if !c.is_ascii_digit() => return None,
+            _ => (),
+        }
+
+        let mut num = 0;
+        loop {
+            match self.currchar() {
+                None => break,
+                Some(c) if !c.is_ascii_digit() => break,
+                Some(c) => {
+                    self.takechar(1);
+                    num = num * 10 + c.to_digit(10).unwrap();
+                },
             }
+        }
+
+        Some(num as usize)
+    }
+
+    fn parse_counted_rep(&mut self) -> Result<(usize, Option<usize>), SyntaxError> {
+        self.takechar(1); // take '{'
+
+        let mut comma = false;
+
+        let lb = match self.parse_int() {
+            None => 0,
+            Some(num) => num,
+        };
+
+        if let Some(',') = self.currchar() {
+            comma = true;
+            self.takechar(1);
+        }
+
+        let hb = match self.parse_int() {
+            None if !comma => Some(lb),
+            Some(hb) if lb > hb => return Err(SyntaxError::new(self.off, InvalidCountedRepetition)),
+            hb @ _ => hb,
+        };
+
+        if let Some('}') = self.currchar() {
+            self.takechar(1);
+        }
+        else {
+            return Err(SyntaxError::new(self.off, InvalidCountedRepetition));
+        }
+
+        Ok((lb, hb))
+    }
+
+    fn parse_rep(&mut self) -> Result<(), SyntaxError> {
+        // Check if the repetition is valid.
+        let term = match self.stack.pop() {
+            Some(t @ Ast::Char(..)) |
+            Some(t @ Ast::Charset(..)) |
+            Some(t @ Ast::AnyChar) |
+            Some(t @ Ast::Group(..)) => t,
             None => return Err(SyntaxError::new(self.off, NothingToRepeat)),
             _ => return Err(SyntaxError::new(self.off, CannotRepeat)),
+        };
+
+        let (min, mut max) = match self.currchar() {
+            Some(c) if c != '{' => {
+                self.takechar(1);
+                match c {
+                    '*' => (0, None),
+                    '+' => (1, None),
+                    _ => (0, Some(1)),
+                }
+            }
+            _ => self.parse_counted_rep()?
+        };
+
+        // Do not allow 0-repetition to make our life easier.
+        if let (0, Some(0)) = (min, max) {
+            return Err(SyntaxError::new(self.off, NothingToRepeat));
         }
-        self.takechar(1);
-        if !greedy {
-            self.takechar(1);
+
+        let greedy = match self.currchar() {
+            Some('?') => {
+                self.takechar(1);
+                false
+            }
+            _ => true,
+        };
+
+        // If there's a lower bound for the repetition, generate a sequence
+        // as if we see a concatenation of that length
+        let mut concat = if min > 0 {
+            if let Some(hb) = max {
+                max = Some(hb - min);
+            }
+            Some(vec![term.clone(); min])
+        }
+        else {
+            None
+        };
+
+        match max {
+            // If there's no upper bound, generate a star here.
+            None => {
+                let rep = Rep { ast: Box::new(term), kind: RepKind::Star, greedy };
+                match concat {
+                    None => self.stack.push(Ast::Rep(rep)),
+                    Some(ref mut v) => v.push(Ast::Rep(rep)),
+                }
+            }
+            // If the repetition is deterministic like `a{3}` do nothing.
+            Some(0) => (),
+            // For the upper bound, generate a series of nested questions.
+            Some(hb) => {
+                let mut rep = Rep { ast: Box::new(term.clone()), kind: RepKind::Question, greedy };
+                for _ in 0..hb - 1 {
+                    rep = Rep {
+                        ast: Box::new(Ast::Concat(vec![term.clone(), Ast::Rep(rep)])),
+                        kind: RepKind::Question,
+                        greedy,
+                    };
+                }
+                match concat {
+                    None => self.stack.push(Ast::Rep(rep)),
+                    Some(ref mut v) => v.push(Ast::Rep(rep)),
+                }
+            }
+        }
+
+        if let Some(v) = concat {
+            self.stack.push(Ast::Concat(v));
         }
         Ok(())
     }
 
-    fn push_alter(&mut self, mut terms: Vec<Ast>, alter: Option<Vec<Ast>>) -> Result<(), SyntaxError> {
+    fn push_alter(&mut self, mut terms: Vec<Ast>, alter: Option<Vec<Ast>>)
+            -> Result<(), SyntaxError> {
         if terms.is_empty() {
             return Err(SyntaxError::new(self.off, MissingAlternation));
         }
@@ -322,14 +432,7 @@ impl Parser {
             let curr = self.currchar().unwrap();
             match curr {
                 '\\' => self.parse_push_esc()?,
-                '*' | '+' | '?' => {
-                    let greedy = match self.nextchar(1) {
-                        Some(c) if c == '?' => false,
-                        Some(_) => true,
-                        None => true,
-                    };
-                    self.parse_repeat(curr, greedy)?;
-                }
+                '*' | '+' | '?' | '{' => self.parse_rep()?,
                 '|' => self.parse_alter()?,
                 '(' => self.parse_paren()?,
                 ')' => self.parse_group()?,
@@ -398,8 +501,8 @@ mod tests {
         // repetitions, all are delegated to the `rep` macro
         ( (* $t:tt) )    => { ast!((rep $t, RepKind::Star, true)) };
         ( (*? $t:tt) )   => { ast!((rep $t, RepKind::Star, false)) };
-        ( (+ $t:tt) )    => { ast!((rep $t, RepKind::Plus, true)) };
-        ( (+? $t:tt) )   => { ast!((rep $t, RepKind::Plus, false)) };
+        ( (+ $t:tt) )    => { ast!((& $t, (* $t))) };
+        ( (+? $t:tt) )   => { ast!((& $t, (*? $t))) };
         ( (? $t:tt) )    => { ast!((rep $t, RepKind::Question, true)) };
         ( (?? $t:tt) )   => { ast!((rep $t, RepKind::Question, false)) };
 
@@ -480,6 +583,16 @@ mod tests {
         assert_parse!(r"[-a\-c^0\-3-]", ast!((cs '-', 'a', 'c', '^', '0', '3')), false, false);
         assert_parse!(r"[^a\-c^0\-3-]", ast!((!cs '-', 'a', 'c', '^', '0', '3')), false, false);
         assert_parse!(r"[\[\]\\\-\a]", ast!((cs 'a', '\\', '[', ']', '-')), false, false);
+        assert_parse!(r"a{,}", ast!((* 'a')), false, false);
+        assert_parse!(r"a{,}?", ast!((*? 'a')), false, false);
+        assert_parse!(r"a{3}", ast!((& 'a', 'a', 'a')), false, false);
+        assert_parse!(r"a{3}?", ast!((& 'a', 'a', 'a')), false, false);
+        assert_parse!(r"a{3,}", ast!((& 'a', 'a', 'a', (* 'a'))), false, false);
+        assert_parse!(r"a{3,}?", ast!((& 'a', 'a', 'a', (*? 'a'))), false, false);
+        assert_parse!(r"a{,3}", ast!((? (& 'a', (? (& 'a', (? 'a')))))), false, false);
+        assert_parse!(r"a{,3}?", ast!((?? (& 'a', (?? (& 'a', (?? 'a')))))), false, false);
+        assert_parse!(r"a{1,3}", ast!((& 'a', (? (& 'a', (? 'a'))))), false, false);
+        assert_parse!(r"a{1,3}?", ast!((& 'a', (?? (& 'a', (?? 'a'))))), false, false);
 
         // The bad
         assert_err!(r"+", SyntaxError::new(0, NothingToRepeat));
@@ -508,5 +621,16 @@ mod tests {
         assert_err!(r"[z-a]", SyntaxError::new(3, InvalidCharacterRange));
         assert_err!(r"[a\", SyntaxError::new(3, UnterminatedCharset));
         assert_err!(r"[虎]", SyntaxError::new(1, NonAsciiNotSupported));
+        assert_err!(r"a{", SyntaxError::new(2, InvalidCountedRepetition));
+        assert_err!(r"a{3b", SyntaxError::new(3, InvalidCountedRepetition));
+        assert_err!(r"a{b", SyntaxError::new(2, InvalidCountedRepetition));
+        assert_err!(r"a{3,b", SyntaxError::new(4, InvalidCountedRepetition));
+        assert_err!(r"a{5,3}", SyntaxError::new(5, InvalidCountedRepetition));
+        assert_err!(r"a{}", SyntaxError::new(3, NothingToRepeat));
+        assert_err!(r"a{}?", SyntaxError::new(3, NothingToRepeat));
+        assert_err!(r"a{0}", SyntaxError::new(4, NothingToRepeat));
+        assert_err!(r"a{0}?", SyntaxError::new(4, NothingToRepeat));
+        assert_err!(r"a{0,0}", SyntaxError::new(6, NothingToRepeat));
+        assert_err!(r"a{0,0}?", SyntaxError::new(6, NothingToRepeat));
     }
 }

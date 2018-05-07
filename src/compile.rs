@@ -1,7 +1,7 @@
 use ::NGROUPS;
 use charset::Charset;
 use error::Error;
-use parse::{Ast, RepKind, Parsed};
+use parse::{Ast, Parsed, RepKind};
 use std::fmt;
 use std::boxed::Box;
 
@@ -128,20 +128,6 @@ impl Compiler {
         Ok(Patch { entry: split, holes: vec![split] })
     }
 
-    fn compile_plus(&mut self, ast: &Ast, greedy: bool) -> Result<Patch, Error> {
-        let patch = self.compile_ast(ast)?;
-        let split = if greedy {
-            self.emit(Inst::Split(patch.entry, HOLE))
-        }
-        else {
-            self.emit(Inst::Split(HOLE, patch.entry))
-        };
-        for hole in patch.holes {
-            self.fill(hole, split);
-        }
-        Ok(Patch { entry: patch.entry, holes: vec![split] })
-    }
-
     fn compile_question(&mut self, ast: &Ast, greedy: bool) -> Result<Patch, Error> {
         let inst = if greedy {
             Inst::Split(self.next_ip() + 1, HOLE)
@@ -234,7 +220,6 @@ impl Compiler {
             &Ast::Rep(ref rep) => {
                 match rep.kind {
                     RepKind::Star => self.compile_star(&rep.ast, rep.greedy),
-                    RepKind::Plus => self.compile_plus(&rep.ast, rep.greedy),
                     RepKind::Question => self.compile_question(&rep.ast, rep.greedy),
                 }
             }
@@ -391,7 +376,9 @@ mod tests {
         assert_compile!(Parser::parse(r"a+").unwrap(), p! {
             i!(save 0),
             i!(char 'a'),
-            i!(split 4, 6),
+            i!(split 6, 8),
+            i!(char 'a'),
+            i!(jump 5),
             i!(save 1),
             i!(match)
         });
@@ -399,7 +386,9 @@ mod tests {
         assert_compile!(Parser::parse(r"a+?").unwrap(), p! {
             i!(save 0),
             i!(char 'a'),
-            i!(split 6, 4),
+            i!(split 8, 6),
+            i!(char 'a'),
+            i!(jump 5),
             i!(save 1),
             i!(match)
         });
@@ -456,7 +445,9 @@ mod tests {
         assert_compile!(Parser::parse(r".+").unwrap(), p! {
             i!(save 0),
             i!(anychar),
-            i!(split 4, 6),
+            i!(split 6, 8),
+            i!(anychar),
+            i!(jump 5),
             i!(save 1),
             i!(match)
         });

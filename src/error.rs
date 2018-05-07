@@ -14,6 +14,7 @@ pub enum SyntaxErrorKind {
     NonAsciiNotSupported,
     UnterminatedCharset,
     InvalidCharacterRange,
+    InvalidCountedRepetition,
 }
 
 #[derive(Debug)]
@@ -54,6 +55,7 @@ impl From<SyntaxError> for Error {
             SyntaxErrorKind::NonAsciiNotSupported => "non ascii characters are not supported",
             SyntaxErrorKind::UnterminatedCharset => "unterminated character set",
             SyntaxErrorKind::InvalidCharacterRange => "invalid character range",
+            SyntaxErrorKind::InvalidCountedRepetition => "invalid counted repetition",
         }))
     }
 }
