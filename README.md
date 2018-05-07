@@ -12,6 +12,7 @@ Toy regular expression library.
 * Capturing groups
 * Non-capturing groups `(?:)`
 * ASCII character sets like `[a-z]`
+* Counted-repetitions like `a{3,5}`
 
 ## Benchmark
 
