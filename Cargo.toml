@@ -7,4 +7,5 @@ authors = ["Jing Peng <pj.hades@gmail.com>"]
 debug = true
 opt-level = 3
 
-[dependencies]
+[features]
+debug = []

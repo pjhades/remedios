@@ -39,6 +39,9 @@ impl fmt::Debug for MatchResult {
 }
 
 pub fn rematch(re: &str, s: &str) -> Result<MatchResult, Error> {
+    #[cfg(feature = "debug")]
+    println!("regex: {}", re);
+
     let prog = Compiler::compile(&Parser::parse(re)?)?;
     let mut vm = Vm::new(&prog);
     if vm.run(&s.chars().collect()) {

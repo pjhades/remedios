@@ -107,6 +107,9 @@ impl<'a> Vm<'a> {
     }
 
     pub fn run(&mut self, s: &Vec<char>) -> bool {
+        #[cfg(feature = "debug")]
+        println!("program:\n{:?}", self.prog);
+
         let mut curr = Vec::with_capacity(self.prog.insts.len());
         let mut next = Vec::with_capacity(self.prog.insts.len());
         let slen = s.len();
