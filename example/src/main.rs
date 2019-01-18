@@ -1,14 +1,15 @@
 extern crate remedios;
 
-use remedios::{MatchResult, Group, re_match};
+use remedios::{MatchResult, rematch, NGROUPS};
 
 fn main() {
     let s = "defghxyz";
-    let m = re_match(r"(a(bc)|d(ef)(gh))xyz", s).unwrap();
+    let m = rematch(r"(a(bc)|d(ef)(gh))xyz", s).unwrap();
     if let MatchResult::Match(ref groups) = m {
-        for (i, g) in groups.iter().enumerate() {
-            if let &Some(Group{ begin, end }) = g {
-                println!("{}: {}", i, &s[begin..end]);
+        for i in 0..NGROUPS {
+            let ii = i as usize * 2;
+            if let (Some(begin), Some(end)) = (groups[ii], groups[ii + 1]) {
+                println!("group {}: {}", i, &s[begin..end]);
             }
         }
     }
