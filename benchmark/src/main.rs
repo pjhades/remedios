@@ -9,11 +9,10 @@ extern crate test;
 extern crate time;
 
 use benchmark::{pcre2, oniguruma, re2};
-//use core::arch;
 use rand::{Rng, thread_rng};
-//use remedios::{MatchResult, rematch};
 use regex::Regex;
 
+const RE_ANY: &str = r"^.+$";
 const RE_RNA: &str = r"^((A|C|G|T)?)*(A|C|G|T)*$";
 const K: usize = 1024;
 const M: usize = 1024 * K;
@@ -21,7 +20,7 @@ const M: usize = 1024 * K;
 type Matcher = fn(&str, &str) -> Result<bool, String>;
 type TextGenerator = fn(usize) -> String;
 
-fn rna_of_len(len: usize) -> String {
+fn gen_rna(len: usize) -> String {
     let mut rng = thread_rng();
     let nucleobase = ['A', 'C', 'G', 'T'];
     let mut s = String::with_capacity(len);
@@ -31,7 +30,7 @@ fn rna_of_len(len: usize) -> String {
     s
 }
 
-fn alphanumeric_of_len(len: usize) -> String {
+fn gen_alnum(len: usize) -> String {
     let mut rng = thread_rng();
     let alphabet = "abcdefghijklmnopqrstuvwxyz\
                     ABCDEFGHIJKLMNOPQRSTUVWXYZ\
@@ -55,21 +54,6 @@ fn remedios_rematch(pattern: &str, text: &str) -> Result<bool, String> {
         remedios::MatchResult::Match(_) => Ok(true),
     }
 }
-
-//#[cfg(target_arch = "x86")]
-//fn flush_cache_line(ptr: *mut u8) {
-//    arch::x86::_mm_clflush(ptr);
-//}
-//
-//#[cfg(target_arch = "x86_64")]
-//fn flush_cache_line(ptr: *mut u8) {
-//    arch::x86_64::_mm_clflush(ptr);
-//}
-//
-//#[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
-//fn flush_cache_line(_ptr: *mut u8) {
-//    // no-op on other architectures, the results may differ
-//}
 
 const MATCHERS: &[(&str, Matcher)] = &[
     ("pcre2",     pcre2::rematch),
@@ -114,20 +98,6 @@ fn b(description: &str, pattern: &str, text_generator: TextGenerator) {
 }
 
 fn main() {
-    b("full match", r"^.*$", alphanumeric_of_len);
-    b("rna", RE_RNA, rna_of_len);
-    //let cases = [
-    //    ("full match", r"^.*$", ascii_of_len),
-    //];
-
-    //for (caption, pattern, gen) in cases.iter() {
-    //    run_all(caption, pattern, gen);
-    //}
-
-    //println!("{}", pcre2::rematch(RE_RNA, &rna).unwrap());
-    //println!("{}", oniguruma::rematch(RE_RNA, &rna).unwrap());
-    //println!("{}", re2::rematch(RE_RNA, &rna).unwrap());
-    //println!("{}", Regex::new(RE_RNA).unwrap().is_match(&rna));
 }
 
 #[cfg(test)]
@@ -136,28 +106,21 @@ mod tests {
     use super::*;
 
     macro_rules! add_bench {
-        ( $name:ident, $matcher:ident, $len:expr ) => {
+        ( $benchname:ident, $matcher:ident, $regex:ident, $textgen:ident, $len:expr ) => {
             #[bench]
-            fn $name(b: &mut Bencher) {
-                let rna = rna_of_len($len);
-                b.iter(|| { $matcher(RE_RNA, &rna).unwrap(); });
+            fn $benchname(b: &mut Bencher) {
+                let text = $textgen($len);
+                b.iter(|| { $matcher($regex, &text).unwrap(); });
             }
         };
     }
 
-    add_bench!(  rna8Kr, remedios_rematch,   8*K);
-    add_bench!( rna16Kr, remedios_rematch,  16*K);
-    //add_bench!( rna32Kr, remedios_rematch,  32*K);
-    //add_bench!( rna64Kr, remedios_rematch,  64*K);
-    //add_bench!(rna128Kr, remedios_rematch, 128*K);
-    //add_bench!(rna256Kr, remedios_rematch, 256*K);
-    //add_bench!(rna512Kr, remedios_rematch, 512*K);
-
-    add_bench!(  rna8K, rust_regex_rematch,   8*K);
-    add_bench!( rna16K, rust_regex_rematch,  16*K);
-    //add_bench!( rna32K, rust_regex_rematch,  32*K);
-    //add_bench!( rna64K, rust_regex_rematch,  64*K);
-    //add_bench!(rna128K, rust_regex_rematch, 128*K);
-    //add_bench!(rna256K, rust_regex_rematch, 256*K);
-    //add_bench!(rna512K, rust_regex_rematch, 512*K);
+    add_bench!(rna_8k_remedios,  remedios_rematch, RE_RNA, gen_rna, 8*K);
+    add_bench!(rna_16k_remedios, remedios_rematch, RE_RNA, gen_rna, 16*K);
+    add_bench!(rna_8k_rust,  rust_regex_rematch, RE_RNA, gen_rna, 8*K);
+    add_bench!(rna_16k_rust, rust_regex_rematch, RE_RNA, gen_rna, 16*K);
+    add_bench!(alnum_8k_remedios,  remedios_rematch, RE_ANY, gen_alnum, 8*K);
+    add_bench!(alnum_16k_remedios, remedios_rematch, RE_ANY, gen_alnum, 16*K);
+    add_bench!(alnum_8k_rust,  rust_regex_rematch, RE_ANY, gen_alnum, 8*K);
+    add_bench!(alnum_16k_rust, rust_regex_rematch, RE_ANY, gen_alnum, 16*K);
 }
